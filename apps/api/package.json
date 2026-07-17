@@ -27,7 +27,7 @@
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "busboy": "^1.6.0",
-    "bullmq": "^5.80.5",
+    "bullmq": "^5.80.7",
     "ioredis": "^5.11.1",
     "minio": "^8.0.7",
     "pg": "^8.16.3",
