@@ -1,101 +1,153 @@
 # FlowForm Studio PRO
 
-FlowForm Studio is a visual builder for forms, approval workflows, submissions,
-and contextual team conversations. It is designed as a production-shaped React
-and TypeScript portfolio project with a self-contained demo experience.
+FlowForm Studio is a production-shaped React and Node.js portfolio application for
+building forms, publishing immutable versions, and running conditional approval
+workflows. The demo is deliberately one coherent vertical slice instead of a set of
+disconnected screens.
 
-## Current vertical slice
+Each visitor receives a token-protected sandbox that expires after 24 hours. The
+role switcher makes the complete designer, applicant, operations, and management
+journey reviewable without creating several accounts.
 
-The first release demonstrates one complete flow:
+## What this repository demonstrates
 
-1. Build a multi-step expense request form
-2. Configure a conditional two-stage approval workflow
-3. Publish and submit the form
-4. Request clarification in a contextual conversation
-5. Resubmit and approve as reviewer and management
-6. Inspect the immutable audit timeline
+- React 19, TypeScript, Vite, TanStack Query, Zustand, React Hook Form, and React Flow
+- NestJS with versioned REST endpoints, OpenAPI, Socket.IO, and structured errors
+- PostgreSQL persistence through Prisma with optimistic concurrency control
+- A transactional audit and outbox write for every aggregate mutation
+- Redis-backed event delivery with a direct development fallback
+- Backpressure-aware uploads to private MinIO storage with signature and size checks
+- Runtime-validated contracts shared between browser and server
+- Unit, contract, HTTP integration, and Playwright browser tests
+- Multi-stage Docker builds, health probes, migrations, and GitHub Actions
 
-The public demo creates an isolated 24-hour sandbox. A role switcher allows one
-reviewer to experience every role without creating accounts.
+## Recruiter walkthrough
 
-## How the application runs
+1. Edit the typed expense form in the visual builder
+2. Inspect the conditional workflow where requests above EUR 5,000 require management
+3. Publish an immutable form and workflow version
+4. Submit the prefilled request as the applicant
+5. Request clarification as operations and resubmit as the applicant
+6. Complete operations and management approval
+7. Inspect the server-generated audit trail
 
-FlowForm Studio is browser-first. During development it opens as a normal web
-application. The production build is also a Progressive Web App and can be
-installed from a supporting browser on Windows, macOS, Linux, Android, and iOS.
-It does not require or currently ship a separate Windows `.exe` or macOS app.
-
-The installed PWA uses the same React and TypeScript code as the browser
-version. Static application assets are available offline, while collaboration,
-publishing, uploads, and API operations require the backend.
+The Playwright specification in
+[`apps/web/e2e/recruiter-flow.spec.ts`](apps/web/e2e/recruiter-flow.spec.ts)
+executes this same journey against a running browser and API.
 
 ## Architecture
 
 ```text
-React + TypeScript PWA
-├── visual form builder and dynamic form runtime
-├── typed React Flow workflow editor
-├── TanStack Query server state
-└── Zustand command history
-
-NestJS + TypeScript
-├── versioned REST and OpenAPI
-├── Socket.IO collaboration events
-├── workflow engine and audit outbox
-└── sandbox cleanup worker
-
-PostgreSQL + Redis + MinIO
+React PWA
+  ├─ TanStack Query owns the canonical sandbox returned by the API
+  ├─ Zustand owns only UI state, draft history, and unsaved edits
+  └─ Socket.IO invalidates canonical queries after durable changes
+             │
+             ▼
+NestJS API ── optimistic revision and aggregate-version checks
+  ├─ PostgreSQL: sandbox aggregate, audit entries, attachments, outbox
+  ├─ Redis/BullMQ: retryable realtime delivery
+  └─ MinIO: private streamed attachment objects
 ```
 
-The checked-in Prisma model, containers, and service boundaries provide the
-production persistence foundation. The current recruiter slice deliberately
-keeps each protected sandbox in API memory and expires it after 24 hours. This
-makes the demo disposable and prevents recruiter test data from becoming
-permanent. Durable multi-tenant persistence is the next production milestone.
+The form, workflow, API, and realtime boundaries are separate workspace packages.
+Responses are parsed at runtime with Zod, so a successful HTTP status with an invalid
+body is still rejected by the client.
 
-## Local development
+See [`docs/architecture.md`](docs/architecture.md) for state ownership, consistency
+boundaries, failure behavior, and module responsibilities. The main persistence
+decision is recorded in
+[`docs/adr/0001-sandbox-aggregate-and-outbox.md`](docs/adr/0001-sandbox-aggregate-and-outbox.md).
 
-Requirements are Node.js 22 or newer and Corepack.
+## Consistency and security guarantees
+
+- Draft saves use an expected revision. Conflicts return `409 revision_conflict`
+  instead of silently overwriting another edit.
+- Aggregate state, its audit entry, attachment metadata, and its outbox event are
+  written in one PostgreSQL transaction.
+- Realtime delivery is at least once. Event IDs allow clients to deduplicate, and
+  the UI always reloads canonical state after a durable event.
+- Uploads are streamed with backpressure, capped at 5 MB, allowlisted by media type,
+  checked by file signature, hashed with SHA-256, and removed with their sandbox.
+- Access tokens are returned once and stored only as SHA-256 hashes by the API.
+- The project does not claim exactly-once execution. A client may retry after losing
+  a response, while revision and aggregate checks prevent stale overwrites.
+
+PostgreSQL is used whenever `DATABASE_URL` is configured. A memory repository exists
+only as an explicit local and test fallback and logs that its state is disposable.
+
+## Repository layout
+
+```text
+apps/
+  api/                     NestJS API, Prisma migration, workers
+  web/                     React PWA and Playwright journey
+packages/
+  api-client/              typed, runtime-validating HTTP client
+  api-contracts/           shared HTTP schemas
+  form-schema/             typed form model, conditions, validation
+  realtime-contracts/      durable and ephemeral event schemas
+  workflow-schema/         workflow graph and transition engine
+docs/                      architecture notes and decisions
+deploy/                    Caddy edge configuration
+```
+
+## Run the complete stack
+
+Requirements are Docker with Compose. Copy the safe local defaults and start all
+services:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Open `http://localhost:4173`. OpenAPI is available at
+`http://localhost:4173/api/docs` through the same Caddy entry point.
+
+The API container applies pending Prisma migrations before starting. PostgreSQL,
+Redis, MinIO, API, web, and Caddy all have health checks.
+
+## Run in development
+
+Requirements are Node.js 22 or newer and pnpm 11.13.1.
 
 ```bash
 corepack enable
 pnpm install
+docker compose up -d postgres redis minio
+export DATABASE_URL=postgresql://flowform:flowform-local-only@localhost:5432/flowform
+export REDIS_URL=redis://localhost:6379
+export MINIO_ENDPOINT=localhost
+export MINIO_PORT=9000
+export MINIO_ACCESS_KEY=flowform
+export MINIO_SECRET_KEY=flowform-local-secret
+export PUBLIC_APP_URL=http://localhost:5173
+pnpm db:migrate:deploy
 pnpm dev
 ```
 
-If the installed Corepack version cannot provision pnpm, the equivalent
-bootstrap command is `npx --yes pnpm@11.13.1 install`. The remaining commands
-can then be prefixed with `npx --yes pnpm@11.13.1` in the same way.
+The PWA runs at `http://localhost:5173` and proxies REST and Socket.IO traffic to
+the API at `http://localhost:3000`.
 
-The web app uses `http://localhost:5173` and the API uses
-`http://localhost:3000/api/v1`.
-
-For the complete service topology, copy `.env.example` to `.env` and run:
-
-```bash
-docker compose up --build
-```
+If Corepack cannot provision pnpm, use `npx --yes pnpm@11.13.1` in place of `pnpm`.
 
 ## Verification
 
 ```bash
-pnpm format:check
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
+pnpm verify
+pnpm test:e2e
+docker compose config --quiet
+docker compose build web api
 ```
+
+`pnpm verify` checks formatting, lint rules, strict TypeScript, unit and integration
+tests, and production builds. CI executes the HTTP and browser journeys against a
+real PostgreSQL service.
 
 ## License
 
-This project is source-available under the PolyForm Noncommercial License
-1.0.0.
-
-Personal and other noncommercial use is permitted. Commercial use is not
-licensed at this time.
-
-Limited technical evaluation for recruitment purposes is permitted under
-[`EVALUATION-GRANT.md`](EVALUATION-GRANT.md).
-
-This project is source-available, not open source. See [`LICENSE`](LICENSE) and
+This project is source-available under the PolyForm Noncommercial License 1.0.0.
+Limited technical evaluation for recruitment is permitted under
+[`EVALUATION-GRANT.md`](EVALUATION-GRANT.md). See [`LICENSE`](LICENSE) and
 [`COMMERCIAL-LICENSE.md`](COMMERCIAL-LICENSE.md) for details.

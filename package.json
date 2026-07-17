@@ -1,6 +1,6 @@
 {
   "name": "flowform-studio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A visual studio for forms, approvals, and collaborative workflows",
   "license": "PolyForm-Noncommercial-1.0.0",
@@ -10,11 +10,16 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev --parallel",
+    "build:packages": "turbo run build --filter='./packages/*'",
+    "db:generate": "pnpm --filter @flowform/api prisma:generate",
+    "db:migrate": "pnpm --filter @flowform/api prisma:migrate",
+    "db:migrate:deploy": "pnpm --filter @flowform/api prisma:migrate:deploy",
+    "dev": "pnpm build:packages && turbo run dev --parallel",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "test:e2e": "pnpm --filter @flowform/web test:e2e",
     "typecheck": "turbo run typecheck",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },

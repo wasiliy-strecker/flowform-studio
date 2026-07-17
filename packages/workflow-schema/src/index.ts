@@ -126,23 +126,31 @@ export function validateWorkflow(definition: WorkflowDefinition): WorkflowValida
   return issues
 }
 
-export type WorkflowStatus = 'inReview' | 'needsClarification' | 'approved' | 'rejected'
+export const WorkflowStatusSchema = z.enum([
+  'inReview',
+  'needsClarification',
+  'approved',
+  'rejected',
+])
+export type WorkflowStatus = z.infer<typeof WorkflowStatusSchema>
 
-export interface WorkflowHistoryEntry {
-  id: string
-  nodeId: string
-  action: 'started' | 'approved' | 'clarificationRequested' | 'resubmitted' | 'rejected'
-  actorRole: ActorRole
-  at: string
-  message?: string
-}
+export const WorkflowHistoryEntrySchema = z.object({
+  id: z.string().min(1),
+  nodeId: z.string().min(1),
+  action: z.enum(['started', 'approved', 'clarificationRequested', 'resubmitted', 'rejected']),
+  actorRole: ActorRoleSchema,
+  at: z.iso.datetime(),
+  message: z.string().optional(),
+})
+export type WorkflowHistoryEntry = z.infer<typeof WorkflowHistoryEntrySchema>
 
-export interface WorkflowState {
-  currentNodeId: string
-  status: WorkflowStatus
-  completedNodeIds: string[]
-  history: WorkflowHistoryEntry[]
-}
+export const WorkflowStateSchema = z.object({
+  currentNodeId: z.string().min(1),
+  status: WorkflowStatusSchema,
+  completedNodeIds: z.array(z.string().min(1)),
+  history: z.array(WorkflowHistoryEntrySchema),
+})
+export type WorkflowState = z.infer<typeof WorkflowStateSchema>
 
 export type WorkflowAction =
   | { type: 'approve'; actorRole: ActorRole; at: string; id: string }

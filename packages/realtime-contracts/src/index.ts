@@ -1,24 +1,44 @@
 import { ActorRoleSchema } from '@flowform/form-schema'
 import { z } from 'zod'
 
-const EventBaseSchema = z.object({
+const DurableEventBaseSchema = z.object({
+  id: z.string().min(1),
+  sandboxId: z.string().min(1),
+  aggregateVersion: z.number().int().positive(),
+  occurredAt: z.iso.datetime(),
+})
+
+const EphemeralEventBaseSchema = z.object({
   id: z.string().min(1),
   sandboxId: z.string().min(1),
   occurredAt: z.iso.datetime(),
 })
 
-export const CommentCreatedEventSchema = EventBaseSchema.extend({
-  type: z.literal('comment.created'),
+export const RealtimeReadySchema = z.object({
+  sandboxId: z.string().min(1),
+  connectedAt: z.iso.datetime(),
+})
+export type RealtimeReady = z.infer<typeof RealtimeReadySchema>
+
+export const sandboxChangeReasons = [
+  'sandbox.created',
+  'sandbox.roleChanged',
+  'form.draftUpdated',
+  'form.versionPublished',
+  'submission.created',
+  'workflow.actionApplied',
+  'comment.created',
+  'attachment.uploaded',
+] as const
+
+export const SandboxChangedEventSchema = DurableEventBaseSchema.extend({
+  type: z.literal('sandbox.changed'),
   payload: z.object({
-    commentId: z.string().min(1),
-    submissionId: z.string().min(1),
-    actorRole: ActorRoleSchema,
-    message: z.string().min(1),
-    anchorFieldId: z.string().optional(),
+    reason: z.enum(sandboxChangeReasons),
   }),
 })
 
-export const TypingChangedEventSchema = EventBaseSchema.extend({
+export const TypingChangedEventSchema = EphemeralEventBaseSchema.extend({
   type: z.literal('typing.changed'),
   payload: z.object({
     submissionId: z.string().min(1),
@@ -27,17 +47,9 @@ export const TypingChangedEventSchema = EventBaseSchema.extend({
   }),
 })
 
-export const SubmissionStatusChangedEventSchema = EventBaseSchema.extend({
-  type: z.literal('submission.statusChanged'),
-  payload: z.object({
-    submissionId: z.string().min(1),
-    status: z.enum(['draft', 'inReview', 'needsClarification', 'approved', 'rejected']),
-  }),
-})
-
 export const RealtimeEventSchema = z.discriminatedUnion('type', [
-  CommentCreatedEventSchema,
+  SandboxChangedEventSchema,
   TypingChangedEventSchema,
-  SubmissionStatusChangedEventSchema,
 ])
 export type RealtimeEvent = z.infer<typeof RealtimeEventSchema>
+export type SandboxChangedEvent = z.infer<typeof SandboxChangedEventSchema>

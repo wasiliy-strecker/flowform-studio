@@ -1,4 +1,4 @@
-.PHONY: setup dev format lint typecheck test build verify docker-up docker-down
+.PHONY: setup dev format lint typecheck test e2e build verify db-migrate docker-up docker-down
 
 PNPM := npx --yes pnpm@11.13.1
 
@@ -19,6 +19,12 @@ typecheck:
 
 test:
 	$(PNPM) test
+
+e2e:
+	$(PNPM) test:e2e
+
+db-migrate:
+	$(PNPM) db:migrate:deploy
 
 build:
 	$(PNPM) build

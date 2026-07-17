@@ -1,88 +1,104 @@
-import type { RealtimeEvent } from '@flowform/realtime-contracts'
-import { Injectable } from '@nestjs/common'
+import {
+  RealtimeEventSchema,
+  RealtimeReadySchema,
+  type RealtimeEvent,
+} from '@flowform/realtime-contracts'
+import { Inject, Logger } from '@nestjs/common'
 import {
   ConnectedSocket,
   MessageBody,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
+  type OnGatewayConnection,
+  type OnGatewayDisconnect,
 } from '@nestjs/websockets'
 import { randomUUID } from 'node:crypto'
 import type { Server, Socket } from 'socket.io'
+import { z } from 'zod'
 
 import { SandboxService } from '../sandbox/sandbox.service'
-import type { DemoSandbox, SandboxComment } from '../sandbox/sandbox.types'
 
-@Injectable()
+const SocketAuthenticationSchema = z.object({
+  sandboxId: z.string().min(1),
+  accessToken: z.string().min(32),
+})
+
+const TypingInputSchema = z.object({
+  submissionId: z.string().min(1),
+  typing: z.boolean(),
+})
+
 @WebSocketGateway({
   namespace: '/realtime',
   cors: { origin: process.env.PUBLIC_APP_URL ?? 'http://localhost:5173', credentials: true },
 })
-export class RealtimeGateway {
+export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  private readonly logger = new Logger(RealtimeGateway.name)
+  private readonly sessions = new Map<string, z.infer<typeof SocketAuthenticationSchema>>()
+
   @WebSocketServer()
-  private readonly server: Server
+  private server?: Server
 
-  constructor(private readonly sandboxes: SandboxService) {}
+  constructor(@Inject(SandboxService) private readonly sandboxes: SandboxService) {}
 
-  @SubscribeMessage('sandbox.join')
-  join(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() body: { sandboxId: string; accessToken: string },
-  ): { joined: true; sandboxId: string } {
-    this.sandboxes.assertAccess(body.sandboxId, body.accessToken)
-    void client.join(this.room(body.sandboxId))
-    return { joined: true, sandboxId: body.sandboxId }
+  async handleConnection(client: Socket): Promise<void> {
+    const authentication = SocketAuthenticationSchema.safeParse(client.handshake.auth)
+    if (!authentication.success) {
+      client.disconnect(true)
+      return
+    }
+    try {
+      await this.sandboxes.assertAccess(
+        authentication.data.sandboxId,
+        authentication.data.accessToken,
+      )
+      this.sessions.set(client.id, authentication.data)
+      await client.join(this.room(authentication.data.sandboxId))
+      client.emit(
+        'realtime.ready',
+        RealtimeReadySchema.parse({
+          sandboxId: authentication.data.sandboxId,
+          connectedAt: new Date().toISOString(),
+        }),
+      )
+    } catch (error) {
+      this.sessions.delete(client.id)
+      this.logger.warn({
+        socketId: client.id,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      client.disconnect(true)
+    }
+  }
+
+  handleDisconnect(client: Socket): void {
+    this.sessions.delete(client.id)
   }
 
   @SubscribeMessage('typing.changed')
-  typing(
-    @ConnectedSocket() client: Socket,
-    @MessageBody()
-    body: { sandboxId: string; accessToken: string; submissionId: string; typing: boolean },
-  ): void {
-    this.sandboxes.assertAccess(body.sandboxId, body.accessToken)
-    const sandbox = this.sandboxes.get(body.sandboxId, body.accessToken)
-    client.to(this.room(body.sandboxId)).emit('realtime.event', {
+  async typing(@ConnectedSocket() client: Socket, @MessageBody() body: unknown): Promise<void> {
+    const input = TypingInputSchema.safeParse(body)
+    const session = this.sessions.get(client.id)
+    if (!input.success || !session) return
+
+    const sandbox = await this.sandboxes.get(session.sandboxId, session.accessToken)
+    const event = RealtimeEventSchema.parse({
       id: randomUUID(),
-      sandboxId: body.sandboxId,
+      sandboxId: session.sandboxId,
       occurredAt: new Date().toISOString(),
       type: 'typing.changed',
       payload: {
-        submissionId: body.submissionId,
+        submissionId: input.data.submissionId,
         actorRole: sandbox.activeRole,
-        typing: body.typing,
+        typing: input.data.typing,
       },
-    } satisfies RealtimeEvent)
+    })
+    client.to(this.room(session.sandboxId)).emit('realtime.event', event)
   }
 
-  emitComment(sandboxId: string, comment: SandboxComment): void {
-    this.server?.to(this.room(sandboxId)).emit('realtime.event', {
-      id: randomUUID(),
-      sandboxId,
-      occurredAt: comment.createdAt,
-      type: 'comment.created',
-      payload: {
-        commentId: comment.id,
-        submissionId: 'active',
-        actorRole: comment.actorRole,
-        message: comment.message,
-        ...(comment.anchorFieldId ? { anchorFieldId: comment.anchorFieldId } : {}),
-      },
-    } satisfies RealtimeEvent)
-  }
-
-  emitStatus(sandboxId: string, sandbox: DemoSandbox): void {
-    if (!sandbox.submission) return
-    this.server?.to(this.room(sandboxId)).emit('realtime.event', {
-      id: randomUUID(),
-      sandboxId,
-      occurredAt: new Date().toISOString(),
-      type: 'submission.statusChanged',
-      payload: {
-        submissionId: sandbox.submission.id,
-        status: sandbox.submission.workflowState.status,
-      },
-    } satisfies RealtimeEvent)
+  emitEvent(event: RealtimeEvent): void {
+    this.server?.to(this.room(event.sandboxId)).emit('realtime.event', event)
   }
 
   private room(sandboxId: string): string {

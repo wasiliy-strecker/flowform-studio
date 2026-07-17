@@ -5,7 +5,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "sourceMap": true,
-    "types": ["node", "express", "multer"]
+    "types": ["node", "express"]
   },
   "include": ["src"]
 }

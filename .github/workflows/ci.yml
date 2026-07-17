@@ -13,6 +13,22 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: flowform
+          POSTGRES_USER: flowform
+          POSTGRES_PASSWORD: flowform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flowform -d flowform"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://flowform:flowform@localhost:5432/flowform
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -23,6 +39,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate:deploy
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
@@ -30,8 +47,39 @@ jobs:
       - run: pnpm build
       - name: Validate Prisma schema
         run: pnpm --filter @flowform/api exec prisma validate
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
         env:
-          DATABASE_URL: postgresql://flowform:flowform@localhost:5432/flowform
+          POSTGRES_DB: flowform
+          POSTGRES_USER: flowform
+          POSTGRES_PASSWORD: flowform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flowform -d flowform"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://flowform:flowform@localhost:5432/flowform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate:deploy
+      - run: pnpm --filter @flowform/web exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
 
   containers:
     runs-on: ubuntu-latest

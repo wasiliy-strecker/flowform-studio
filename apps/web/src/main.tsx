@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 
 import App from './App'
 import './i18n'
+import { SandboxProvider } from './sandbox'
 import './styles.css'
 
 const queryClient = new QueryClient({
@@ -18,7 +19,9 @@ if (!root) throw new Error('FlowForm Studio needs a root element.')
 createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <App />
+      <SandboxProvider>
+        <App />
+      </SandboxProvider>
     </QueryClientProvider>
   </StrictMode>,
 )

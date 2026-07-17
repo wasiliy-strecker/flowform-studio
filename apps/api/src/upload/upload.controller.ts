@@ -1,67 +1,101 @@
+import type { StoredAttachment } from '@flowform/api-contracts'
 import {
   BadRequestException,
   Controller,
   Headers,
+  Inject,
   Param,
+  PayloadTooLargeException,
   Post,
-  UploadedFile,
-  UseInterceptors,
+  Req,
 } from '@nestjs/common'
-import { FileInterceptor } from '@nestjs/platform-express'
 import { ApiConsumes, ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger'
+import Busboy from 'busboy'
+import type { Request } from 'express'
 
 import { SandboxService } from '../sandbox/sandbox.service'
-import { UploadService, type StoredAttachment } from './upload.service'
-
-const allowedMediaTypes = new Set(['application/pdf', 'image/png', 'image/jpeg'])
+import { UploadService, maximumUploadBytes } from './upload.service'
 
 @ApiTags('attachments')
 @Controller('sandboxes/:sandboxId/attachments')
 export class UploadController {
   constructor(
+    @Inject(SandboxService)
     private readonly sandboxes: SandboxService,
+    @Inject(UploadService)
     private readonly uploads: UploadService,
   ) {}
 
   @Post()
   @ApiSecurity('sandbox')
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({ summary: 'Store a private sandbox attachment up to 5 MB' })
-  @UseInterceptors(
-    FileInterceptor('file', {
-      limits: { fileSize: 5_000_000, files: 1 },
-      fileFilter: (_request, file, callback) => {
-        callback(
-          allowedMediaTypes.has(file.mimetype)
-            ? null
-            : new BadRequestException('Only PDF, PNG, and JPEG files are accepted.'),
-          allowedMediaTypes.has(file.mimetype),
-        )
-      },
-    }),
-  )
+  @ApiOperation({ summary: 'Stream a private sandbox attachment up to 5 MB' })
   async upload(
     @Param('sandboxId') sandboxId: string,
     @Headers('x-sandbox-token') token: string | undefined,
-    @UploadedFile() file?: Express.Multer.File,
+    @Req() request: Request,
   ): Promise<StoredAttachment> {
-    this.sandboxes.assertAccess(sandboxId, token)
-    if (!file) throw new BadRequestException('A file is required.')
-    if (!matchesMagicBytes(file))
-      throw new BadRequestException('The file content does not match its media type.')
-    const attachment = await this.uploads.put(sandboxId, file)
-    this.sandboxes.recordAttachment(sandboxId, token, attachment.id)
+    await this.sandboxes.assertAccess(sandboxId, token)
+    const attachment = await this.readMultipartUpload(sandboxId, request)
+    try {
+      await this.sandboxes.recordAttachment(sandboxId, token, attachment)
+      return attachment
+    } catch (error) {
+      await this.uploads.remove(attachment.objectKey).catch(() => undefined)
+      throw error
+    }
+  }
+
+  private async readMultipartUpload(
+    sandboxId: string,
+    request: Request,
+  ): Promise<StoredAttachment> {
+    let parser: ReturnType<typeof Busboy>
+    try {
+      parser = Busboy({
+        headers: request.headers,
+        limits: { fileSize: maximumUploadBytes, files: 1, fields: 0 },
+      })
+    } catch {
+      throw new BadRequestException('A multipart form upload is required.')
+    }
+
+    const abortController = new AbortController()
+    request.once('aborted', () => abortController.abort())
+    let fileUpload: Promise<StoredAttachment> | undefined
+    let fileLimitReached = false
+
+    parser.on('file', (fieldName, source, info) => {
+      if (fieldName !== 'file' || fileUpload) {
+        source.resume()
+        return
+      }
+      source.once('limit', () => {
+        fileLimitReached = true
+      })
+      fileUpload = this.uploads.put(sandboxId, {
+        source,
+        originalName: info.filename,
+        mediaType: info.mimeType,
+        signal: abortController.signal,
+      })
+      void fileUpload.catch(() => undefined)
+    })
+
+    const parsing = new Promise<void>((resolve, reject) => {
+      parser.once('finish', resolve)
+      parser.once('error', reject)
+      parser.once('filesLimit', () => reject(new BadRequestException('Only one file is accepted.')))
+    })
+    request.pipe(parser)
+    await parsing
+    if (!fileUpload) throw new BadRequestException('A file is required.')
+
+    const attachment = await fileUpload
+    if (fileLimitReached) {
+      await this.uploads.remove(attachment.objectKey).catch(() => undefined)
+      throw new PayloadTooLargeException(`Files may not exceed ${maximumUploadBytes} bytes.`)
+    }
     return attachment
   }
-}
-
-function matchesMagicBytes(file: Express.Multer.File): boolean {
-  if (file.mimetype === 'application/pdf') return file.buffer.subarray(0, 5).toString() === '%PDF-'
-  if (file.mimetype === 'image/png') {
-    return file.buffer
-      .subarray(0, 8)
-      .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
-  }
-  if (file.mimetype === 'image/jpeg') return file.buffer[0] === 0xff && file.buffer[1] === 0xd8
-  return false
 }

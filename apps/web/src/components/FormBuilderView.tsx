@@ -36,6 +36,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { useSandbox } from '../sandbox'
 import { useWorkspaceStore } from '../store'
 
 const palette: Array<{ kind: FormFieldKind; icon: React.ComponentType<{ size?: number }> }> = [
@@ -54,11 +55,11 @@ const palette: Array<{ kind: FormFieldKind; icon: React.ComponentType<{ size?: n
 
 export function FormBuilderView(): React.JSX.Element {
   const { t } = useTranslation()
-  const form = useWorkspaceStore((state) => state.form)
+  const { sandbox, publishDraft, pendingAction } = useSandbox()
+  const draft = useWorkspaceStore((state) => state.draft)
   const pageIndex = useWorkspaceStore((state) => state.pageIndex)
   const selectedFieldId = useWorkspaceStore((state) => state.selectedFieldId)
-  const revision = useWorkspaceStore((state) => state.revision)
-  const publishedRevision = useWorkspaceStore((state) => state.publishedRevision)
+  const syncPhase = useWorkspaceStore((state) => state.syncPhase)
   const past = useWorkspaceStore((state) => state.past)
   const future = useWorkspaceStore((state) => state.future)
   const setPageIndex = useWorkspaceStore((state) => state.setPageIndex)
@@ -69,18 +70,26 @@ export function FormBuilderView(): React.JSX.Element {
   const deleteSelectedField = useWorkspaceStore((state) => state.deleteSelectedField)
   const undo = useWorkspaceStore((state) => state.undo)
   const redo = useWorkspaceStore((state) => state.redo)
-  const publish = useWorkspaceStore((state) => state.publish)
   const setView = useWorkspaceStore((state) => state.setView)
-
-  const page = form.pages[pageIndex]
-  const selectedField = form.pages
-    .flatMap((candidate) => candidate.fields)
-    .find((field) => field.id === selectedFieldId)
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
+  if (!draft || !sandbox)
+    return (
+      <div className="view-loading">
+        <span /> {t('loadingWorkspace')}
+      </div>
+    )
+  const form = draft.form
+  const revision = draft.baseRevision
+  const publishedRevision = sandbox.publishedVersion?.draftRevision
+
+  const page = form.pages[pageIndex]
+  const selectedField = form.pages
+    .flatMap((candidate) => candidate.fields)
+    .find((field) => field.id === selectedFieldId)
   const handleDragEnd = (event: DragEndEvent): void => {
     const { active, over } = event
     if (!over || !page) return
@@ -100,7 +109,7 @@ export function FormBuilderView(): React.JSX.Element {
     <div className="builder-view">
       <div className="view-toolbar builder-toolbar">
         <div>
-          <div className="eyebrow compact">FORM · v0.{revision}</div>
+          <div className="eyebrow compact">FORM · REVISION {revision}</div>
           <h1>{form.title}</h1>
         </div>
         <div className="toolbar-actions">
@@ -123,9 +132,17 @@ export function FormBuilderView(): React.JSX.Element {
           <button className="secondary-button small" onClick={() => setView('submission')}>
             {t('preview')}
           </button>
-          <button className="primary-button small" onClick={publish}>
+          <button
+            className="primary-button small"
+            onClick={() => void publishDraft().catch(() => undefined)}
+            disabled={pendingAction === 'publish' || syncPhase === 'conflict'}
+          >
             <Save size={16} />
-            {publishedRevision === revision ? t('published') : t('publish')}
+            {pendingAction === 'publish'
+              ? t('publishing')
+              : publishedRevision === revision
+                ? t('published')
+                : t('publish')}
           </button>
         </div>
       </div>
@@ -157,7 +174,7 @@ export function FormBuilderView(): React.JSX.Element {
                 <strong>{page.title}</strong>
               </div>
               <span className="autosave-indicator">
-                <span /> Saved · revision {revision}
+                <span /> {t(`sync.${syncPhase}`)} · revision {revision}
               </span>
             </div>
             <div className="page-tabs" aria-label={t('pages')}>

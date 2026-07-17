@@ -1,8 +1,18 @@
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { defineConfig } from 'vitest/config'
+import { fileURLToPath } from 'node:url'
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@flowform/api-client': workspaceSource('api-client'),
+      '@flowform/api-contracts': workspaceSource('api-contracts'),
+      '@flowform/form-schema': workspaceSource('form-schema'),
+      '@flowform/realtime-contracts': workspaceSource('realtime-contracts'),
+      '@flowform/workflow-schema': workspaceSource('workflow-schema'),
+    },
+  },
   plugins: [
     react(),
     VitePWA({
@@ -36,6 +46,10 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': 'http://localhost:3000',
+      '/socket.io': {
+        target: 'http://localhost:3000',
+        ws: true,
+      },
     },
   },
   preview: {
@@ -44,6 +58,11 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./test/setup.ts'],
+    include: ['./test/**/*.test.{ts,tsx}'],
     css: true,
   },
 })
+
+function workspaceSource(packageName: string): string {
+  return fileURLToPath(new URL(`../../packages/${packageName}/src/index.ts`, import.meta.url))
+}

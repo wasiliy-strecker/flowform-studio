@@ -10,6 +10,7 @@ COPY packages/form-schema/package.json packages/form-schema/package.json
 COPY packages/workflow-schema/package.json packages/workflow-schema/package.json
 COPY packages/realtime-contracts/package.json packages/realtime-contracts/package.json
 COPY packages/api-client/package.json packages/api-client/package.json
+COPY packages/api-contracts/package.json packages/api-contracts/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY . .

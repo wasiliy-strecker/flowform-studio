@@ -1,12 +1,15 @@
 import { Activity, CheckCircle2, Clock3, Database, Fingerprint, ShieldCheck } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { useWorkspaceStore } from '../store'
+import { useSandbox } from '../sandbox'
 
 export function AuditView(): React.JSX.Element {
   const { t } = useTranslation()
-  const entries = useWorkspaceStore((state) => state.auditEntries)
-  const sandboxId = useWorkspaceStore((state) => state.sandboxId)
+  const { sandbox } = useSandbox()
+
+  if (!sandbox) return <div />
+  const entries = sandbox.audit
+  const sandboxId = sandbox.id
 
   return (
     <div className="audit-view view-stack">
@@ -78,8 +81,8 @@ export function AuditView(): React.JSX.Element {
                 <span className={`actor-chip ${entry.actorRole}`}>
                   {t(`roles.${entry.actorRole}`)}
                 </span>
-                <span title={entry.target}>{entry.target}</span>
-                <time>{new Date(entry.at).toLocaleString()}</time>
+                <span title={entry.targetId}>{entry.targetId}</span>
+                <time>{new Date(entry.occurredAt).toLocaleString()}</time>
                 <span className="integrity-state">
                   <CheckCircle2 size={15} /> Recorded
                 </span>

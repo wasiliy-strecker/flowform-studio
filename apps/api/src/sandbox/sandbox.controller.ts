@@ -1,3 +1,4 @@
+import { WorkflowActionInputSchema } from '@flowform/api-contracts'
 import { ActorRoleSchema, FormDefinitionSchema } from '@flowform/form-schema'
 import { WorkflowDefinitionSchema } from '@flowform/workflow-schema'
 import {
@@ -6,6 +7,7 @@ import {
   Controller,
   Get,
   Headers,
+  Inject,
   Param,
   Patch,
   Post,
@@ -14,7 +16,6 @@ import {
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger'
 import { z } from 'zod'
 
-import { RealtimeGateway } from '../realtime/realtime.gateway'
 import {
   ChangeRoleDto,
   CreateCommentDto,
@@ -31,24 +32,14 @@ const UpdateDraftSchema = z.object({
   form: FormDefinitionSchema,
   workflow: WorkflowDefinitionSchema,
 })
-const WorkflowActionSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('approve') }),
-  z.object({ type: z.literal('requestClarification'), message: z.string().min(1).max(2_000) }),
-  z.object({ type: z.literal('resubmit'), message: z.string().max(2_000).optional() }),
-  z.object({ type: z.literal('reject'), message: z.string().max(2_000).optional() }),
-])
-
 @ApiTags('sandboxes')
 @Controller('sandboxes')
 export class SandboxController {
-  constructor(
-    private readonly sandboxes: SandboxService,
-    private readonly realtime: RealtimeGateway,
-  ) {}
+  constructor(@Inject(SandboxService) private readonly sandboxes: SandboxService) {}
 
   @Post()
   @ApiOperation({ summary: 'Create an isolated 24-hour recruiter sandbox' })
-  create(): CreateSandboxResult {
+  async create(): Promise<CreateSandboxResult> {
     return this.sandboxes.create()
   }
 
@@ -58,7 +49,7 @@ export class SandboxController {
   get(
     @Param('sandboxId') sandboxId: string,
     @Headers('x-sandbox-token') token?: string,
-  ): DemoSandbox {
+  ): Promise<DemoSandbox> {
     return this.sandboxes.get(sandboxId, token)
   }
 
@@ -69,7 +60,7 @@ export class SandboxController {
     @Param('sandboxId') sandboxId: string,
     @Headers('x-sandbox-token') token: string | undefined,
     @Body() body: ChangeRoleDto,
-  ): DemoSandbox {
+  ): Promise<DemoSandbox> {
     const role = parse(ActorRoleSchema, body.role)
     return this.sandboxes.changeRole(sandboxId, token, role)
   }
@@ -81,7 +72,7 @@ export class SandboxController {
     @Param('sandboxId') sandboxId: string,
     @Headers('x-sandbox-token') token: string | undefined,
     @Body() body: UpdateDraftDto,
-  ): DemoSandbox {
+  ): Promise<DemoSandbox> {
     const input = parse(UpdateDraftSchema, body)
     return this.sandboxes.updateDraft(
       sandboxId,
@@ -99,11 +90,9 @@ export class SandboxController {
     @Param('sandboxId') sandboxId: string,
     @Headers('x-sandbox-token') token: string | undefined,
     @Body() body: PublishDto,
-  ): DemoSandbox {
+  ): Promise<DemoSandbox> {
     const expectedRevision = parse(z.number().int().positive(), body.expectedRevision)
-    const sandbox = this.sandboxes.publish(sandboxId, token, expectedRevision)
-    this.realtime.emitStatus(sandboxId, sandbox)
-    return sandbox
+    return this.sandboxes.publish(sandboxId, token, expectedRevision)
   }
 
   @Post(':sandboxId/submissions')
@@ -113,11 +102,9 @@ export class SandboxController {
     @Param('sandboxId') sandboxId: string,
     @Headers('x-sandbox-token') token: string | undefined,
     @Body() body: SubmitDto,
-  ): DemoSandbox {
+  ): Promise<DemoSandbox> {
     const answers = parse(z.record(z.string(), z.unknown()), body.answers)
-    const sandbox = this.sandboxes.submit(sandboxId, token, answers)
-    this.realtime.emitStatus(sandboxId, sandbox)
-    return sandbox
+    return this.sandboxes.submit(sandboxId, token, answers)
   }
 
   @Post(':sandboxId/workflow-actions')
@@ -127,19 +114,9 @@ export class SandboxController {
     @Param('sandboxId') sandboxId: string,
     @Headers('x-sandbox-token') token: string | undefined,
     @Body() body: WorkflowActionDto,
-  ): DemoSandbox {
-    const action = parse(WorkflowActionSchema, body)
-    const sandbox = this.sandboxes.performAction(
-      sandboxId,
-      token,
-      action.type === 'resubmit' || action.type === 'reject'
-        ? action.message
-          ? { type: action.type, message: action.message }
-          : { type: action.type }
-        : action,
-    )
-    this.realtime.emitStatus(sandboxId, sandbox)
-    return sandbox
+  ): Promise<DemoSandbox> {
+    const action = parse(WorkflowActionInputSchema, body)
+    return this.sandboxes.performAction(sandboxId, token, action)
   }
 
   @Post(':sandboxId/comments')
@@ -149,14 +126,12 @@ export class SandboxController {
     @Param('sandboxId') sandboxId: string,
     @Headers('x-sandbox-token') token: string | undefined,
     @Body() body: CreateCommentDto,
-  ): DemoSandbox {
+  ): Promise<DemoSandbox> {
     const input = parse(
       z.object({ message: z.string().min(1).max(2_000), anchorFieldId: z.string().optional() }),
       body,
     )
-    const result = this.sandboxes.addComment(sandboxId, token, input.message, input.anchorFieldId)
-    this.realtime.emitComment(sandboxId, result.comment)
-    return result.sandbox
+    return this.sandboxes.addComment(sandboxId, token, input.message, input.anchorFieldId)
   }
 }
 

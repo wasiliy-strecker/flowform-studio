@@ -1,6 +1,6 @@
 {
   "name": "@flowform/api-client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -14,8 +14,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@flowform/api-contracts": "workspace:*",
     "@flowform/form-schema": "workspace:*",
-    "@flowform/workflow-schema": "workspace:*"
+    "@flowform/workflow-schema": "workspace:*",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "vitest": "^4.1.10"

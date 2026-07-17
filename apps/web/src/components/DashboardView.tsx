@@ -1,5 +1,3 @@
-import { FlowFormApiClient } from '@flowform/api-client'
-import { useQuery } from '@tanstack/react-query'
 import {
   ArrowRight,
   Braces,
@@ -12,18 +10,22 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { useSandbox } from '../sandbox'
 import { useWorkspaceStore } from '../store'
 
 export function DashboardView(): React.JSX.Element {
   const { t } = useTranslation()
-  const form = useWorkspaceStore((state) => state.form)
-  const workflow = useWorkspaceStore((state) => state.workflow)
-  const revision = useWorkspaceStore((state) => state.revision)
-  const publishedAt = useWorkspaceStore((state) => state.publishedAt)
-  const workflowState = useWorkspaceStore((state) => state.workflowState)
-  const comments = useWorkspaceStore((state) => state.comments)
+  const { sandbox, realtimeStatus } = useSandbox()
+  const draft = useWorkspaceStore((state) => state.draft)
   const visitedViews = useWorkspaceStore((state) => state.visitedViews)
   const setView = useWorkspaceStore((state) => state.setView)
+
+  if (!sandbox) return <div />
+  const form = draft?.form ?? sandbox.form
+  const workflow = draft?.workflow ?? sandbox.workflow
+  const workflowState = sandbox.submission?.workflowState
+  const publishedAt = sandbox.publishedVersion?.publishedAt
+  const comments = sandbox.submission?.comments ?? []
 
   const steps = [
     { key: 'edit', done: visitedViews.includes('builder') },
@@ -44,7 +46,7 @@ export function DashboardView(): React.JSX.Element {
             <Sparkles size={15} />
             {t('welcomeEyebrow')}
           </div>
-          <ApiHealthBadge />
+          <ApiHealthBadge realtimeStatus={realtimeStatus} />
           <h1>{t('welcomeTitle')}</h1>
           <p>{t('welcomeBody')}</p>
           <div className="hero-actions">
@@ -84,7 +86,7 @@ export function DashboardView(): React.JSX.Element {
       <section className="metric-grid">
         <Metric
           label={t('metrics.formVersion')}
-          value={`v0.${revision}`}
+          value={`r${sandbox.revision}`}
           detail={publishedAt ? t('published') : t('status.draft')}
         />
         <Metric
@@ -166,18 +168,11 @@ export function DashboardView(): React.JSX.Element {
   )
 }
 
-function ApiHealthBadge(): React.JSX.Element | null {
+function ApiHealthBadge({ realtimeStatus }: { realtimeStatus: string }): React.JSX.Element {
   const { t } = useTranslation()
-  const query = useQuery({
-    queryKey: ['api-health'],
-    queryFn: () => new FlowFormApiClient().health(),
-    enabled: import.meta.env.MODE !== 'test',
-    retry: false,
-  })
-  if (import.meta.env.MODE === 'test') return null
   return (
-    <span className={query.isSuccess ? 'api-health online' : 'api-health local'}>
-      <span /> {query.isSuccess ? t('apiOnline') : t('apiLocal')}
+    <span className={realtimeStatus === 'online' ? 'api-health online' : 'api-health local'}>
+      <span /> {realtimeStatus === 'online' ? t('apiOnline') : t('apiConnecting')}
     </span>
   )
 }

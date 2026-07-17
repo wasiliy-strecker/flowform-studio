@@ -1,11 +1,18 @@
-import { Logger } from '@nestjs/common'
+import { ConsoleLogger, Logger } from '@nestjs/common'
 import { NestFactory } from '@nestjs/core'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 
 import { AppModule } from './app.module'
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { cors: false })
+  const app = await NestFactory.create(AppModule, {
+    cors: false,
+    logger: new ConsoleLogger({
+      json: process.env.NODE_ENV !== 'development',
+      colors: process.env.NODE_ENV === 'development',
+    }),
+  })
+  app.enableShutdownHooks()
   app.setGlobalPrefix('api/v1')
   app.enableCors({
     origin: process.env.PUBLIC_APP_URL ?? 'http://localhost:5173',

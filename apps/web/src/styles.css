@@ -399,6 +399,122 @@ button:disabled {
   }
 }
 
+.spin {
+  animation: view-spinner 700ms linear infinite;
+}
+
+.bootstrap-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  align-content: center;
+  gap: 13px;
+  padding: 32px;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(119, 119, 245, 0.16), transparent 30%), var(--bg);
+  text-align: center;
+}
+
+.bootstrap-screen h1 {
+  margin: 4px 0 0;
+  font-size: 24px;
+}
+
+.bootstrap-screen p {
+  max-width: 480px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.error-screen .brand-mark {
+  background: linear-gradient(145deg, var(--danger), #a64356);
+}
+
+.sync-notice {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid rgba(240, 183, 93, 0.25);
+  background: rgba(240, 183, 93, 0.08);
+  padding: 9px 30px;
+  color: var(--warning);
+}
+
+.sync-notice.error {
+  border-color: rgba(240, 112, 127, 0.25);
+  background: rgba(240, 112, 127, 0.08);
+  color: var(--danger);
+}
+
+.sync-notice > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.sync-notice strong {
+  font-size: 10px;
+}
+
+.sync-notice span {
+  color: var(--text-soft);
+  font-size: 9px;
+}
+
+.sync-notice > div:last-child {
+  display: flex;
+  flex: none;
+  gap: 7px;
+}
+
+.sync-notice button {
+  border: 1px solid currentColor;
+  border-radius: 7px;
+  background: transparent;
+  padding: 6px 9px;
+  font-size: 8px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.realtime-dot {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  flex: none;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  color: var(--muted);
+}
+
+.realtime-dot.online {
+  background: rgba(70, 199, 154, 0.11);
+  color: var(--success);
+}
+
+.realtime-dot.offline {
+  background: rgba(240, 112, 127, 0.11);
+  color: var(--danger);
+}
+
+.inline-error {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 17px;
+  border: 1px solid rgba(240, 112, 127, 0.25);
+  border-radius: 8px;
+  background: rgba(240, 112, 127, 0.08);
+  padding: 10px 12px;
+  color: var(--danger);
+  font-size: 9px;
+}
+
 .view-stack {
   display: flex;
   flex-direction: column;

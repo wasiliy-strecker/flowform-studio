@@ -1,4 +1,5 @@
-import { validateAnswers, type FormField } from '@flowform/form-schema'
+import type { StoredAttachment } from '@flowform/api-contracts'
+import { isFieldVisible, validateAnswers, type FormField } from '@flowform/form-schema'
 import {
   AlertCircle,
   ArrowLeft,
@@ -8,6 +9,7 @@ import {
   Circle,
   Clock3,
   FileText,
+  LoaderCircle,
   MessageSquareText,
   Paperclip,
   Send,
@@ -18,33 +20,42 @@ import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
+import { useSandbox } from '../sandbox'
 import { useWorkspaceStore } from '../store'
 
 export function SubmissionView(): React.JSX.Element {
-  const workflowState = useWorkspaceStore((state) => state.workflowState)
-  return workflowState ? <SubmissionReview /> : <PublicFormRuntime />
+  const { sandbox } = useSandbox()
+  return sandbox?.submission ? <SubmissionReview /> : <PublicFormRuntime />
 }
 
 function PublicFormRuntime(): React.JSX.Element {
   const { t, i18n } = useTranslation()
-  const form = useWorkspaceStore((state) => state.form)
+  const { sandbox, pendingAction, submitRequest, uploadAttachment } = useSandbox()
+  const draft = useWorkspaceStore((state) => state.draft)
   const answers = useWorkspaceStore((state) => state.answers)
-  const publishedAt = useWorkspaceStore((state) => state.publishedAt)
   const updateAnswers = useWorkspaceStore((state) => state.updateAnswers)
-  const submit = useWorkspaceStore((state) => state.submit)
-  const publish = useWorkspaceStore((state) => state.publish)
   const [pageIndex, setPageIndex] = useState(0)
   const [runtimeErrors, setRuntimeErrors] = useState<Record<string, string>>({})
-  const page = form.pages[pageIndex]
+  const [submitError, setSubmitError] = useState<string>()
+  const form = draft?.form ?? sandbox?.form
   const {
     register,
     handleSubmit,
     getValues,
     setValue,
+    watch,
     formState: { errors },
   } = useForm<Record<string, unknown>>({ defaultValues: answers })
+  const currentAnswers = watch()
+  const page = form?.pages[pageIndex]
 
-  if (!page) return <div className="empty-state">No public form is available.</div>
+  if (!sandbox || !form || !page) {
+    return (
+      <div className="view-loading">
+        <span /> {t('loadingWorkspace')}
+      </div>
+    )
+  }
 
   const validatePage = (): boolean => {
     const values = getValues()
@@ -63,13 +74,17 @@ function PublicFormRuntime(): React.JSX.Element {
     setPageIndex((current) => Math.min(current + 1, form.pages.length - 1))
   }
 
-  const onSubmit = (values: Record<string, unknown>): void => {
+  const onSubmit = async (values: Record<string, unknown>): Promise<void> => {
     const nextErrors = validateAnswers(form, values)
     setRuntimeErrors(nextErrors)
     if (Object.keys(nextErrors).length > 0) return
     updateAnswers(values)
-    if (!publishedAt) publish()
-    queueMicrotask(submit)
+    setSubmitError(undefined)
+    try {
+      await submitRequest(values)
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : t('submissionFailed'))
+    }
   }
 
   return (
@@ -108,24 +123,33 @@ function PublicFormRuntime(): React.JSX.Element {
           </div>
 
           <div className="runtime-fields">
-            {page.fields.map((field) => (
-              <RuntimeField
-                field={field}
-                error={runtimeErrors[field.id] ?? errors[field.id]?.message?.toString()}
-                language={i18n.language}
-                register={register}
-                setValue={setValue}
-                key={field.id}
-              />
-            ))}
+            {page.fields
+              .filter((field) => isFieldVisible(field, currentAnswers))
+              .map((field) => (
+                <RuntimeField
+                  field={field}
+                  error={runtimeErrors[field.id] ?? errors[field.id]?.message?.toString()}
+                  language={i18n.language}
+                  register={register}
+                  setValue={setValue}
+                  uploadAttachment={uploadAttachment}
+                  key={field.id}
+                />
+              ))}
           </div>
+
+          {submitError && (
+            <div className="inline-error" role="alert">
+              <AlertCircle size={16} /> {submitError}
+            </div>
+          )}
 
           <div className="runtime-actions">
             <button
               type="button"
               className="secondary-button"
               onClick={() => setPageIndex((current) => Math.max(0, current - 1))}
-              disabled={pageIndex === 0}
+              disabled={pageIndex === 0 || Boolean(pendingAction)}
             >
               <ArrowLeft size={17} /> {t('back')}
             </button>
@@ -134,8 +158,13 @@ function PublicFormRuntime(): React.JSX.Element {
                 {t('next')} <ArrowRight size={17} />
               </button>
             ) : (
-              <button type="submit" className="primary-button">
-                <Send size={17} /> {t('submitRequest')}
+              <button type="submit" className="primary-button" disabled={Boolean(pendingAction)}>
+                {pendingAction === 'submit' ? (
+                  <LoaderCircle className="spin" size={17} />
+                ) : (
+                  <Send size={17} />
+                )}{' '}
+                {pendingAction === 'submit' ? t('submitting') : t('submitRequest')}
               </button>
             )}
           </div>
@@ -163,6 +192,7 @@ interface RuntimeFieldProps {
   language: string
   register: ReturnType<typeof useForm<Record<string, unknown>>>['register']
   setValue: ReturnType<typeof useForm<Record<string, unknown>>>['setValue']
+  uploadAttachment: (file: File) => Promise<StoredAttachment>
 }
 
 function RuntimeField({
@@ -171,8 +201,12 @@ function RuntimeField({
   language,
   register,
   setValue,
+  uploadAttachment,
 }: RuntimeFieldProps): React.JSX.Element {
   const { t } = useTranslation()
+  const [uploading, setUploading] = useState(false)
+  const [uploadName, setUploadName] = useState<string>()
+  const [uploadError, setUploadError] = useState<string>()
   const label = localizedFieldLabel(field.id, field.label, language)
   const common = { ...register(field.id, { valueAsNumber: field.kind === 'number' }) }
 
@@ -185,8 +219,23 @@ function RuntimeField({
     )
   }
 
+  const selectFile = async (file: File | undefined): Promise<void> => {
+    if (!file) return
+    setUploading(true)
+    setUploadError(undefined)
+    try {
+      const attachment = await uploadAttachment(file)
+      setValue(field.id, attachment.id, { shouldDirty: true, shouldValidate: true })
+      setUploadName(attachment.originalName)
+    } catch (uploadFailure) {
+      setUploadError(uploadFailure instanceof Error ? uploadFailure.message : t('uploadFailed'))
+    } finally {
+      setUploading(false)
+    }
+  }
+
   return (
-    <div className={error ? 'runtime-field invalid' : 'runtime-field'}>
+    <div className={error || uploadError ? 'runtime-field invalid' : 'runtime-field'}>
       <label htmlFor={field.id}>
         {label}
         {field.required && <span className="required-mark">*</span>}
@@ -236,10 +285,16 @@ function RuntimeField({
         </label>
       ) : field.kind === 'file' ? (
         <label className="runtime-upload" htmlFor={field.id}>
-          <Paperclip size={20} />
-          <strong>Choose a PDF or image</strong>
-          <small>{t('fileNotice')}</small>
-          <input id={field.id} type="file" accept={field.acceptedTypes.join(',')} {...common} />
+          {uploading ? <LoaderCircle className="spin" size={20} /> : <Paperclip size={20} />}
+          <strong>{uploadName ?? t('chooseFile')}</strong>
+          <small>{uploading ? t('uploadingFile') : t('fileNotice')}</small>
+          <input
+            id={field.id}
+            type="file"
+            accept={field.acceptedTypes.join(',')}
+            disabled={uploading}
+            onChange={(event) => void selectFile(event.target.files?.[0])}
+          />
         </label>
       ) : field.kind === 'signature' ? (
         <SignaturePad
@@ -252,9 +307,9 @@ function RuntimeField({
           <AlertCircle size={14} /> {t('signatureDisclaimer')}
         </p>
       )}
-      {error && (
+      {(error || uploadError) && (
         <span className="field-error">
-          <AlertCircle size={14} /> {errorMessage(error, t)}
+          <AlertCircle size={14} /> {uploadError ?? errorMessage(error ?? '', t)}
         </span>
       )}
     </div>
@@ -328,29 +383,31 @@ function SignaturePad({
 
 function SubmissionReview(): React.JSX.Element {
   const { t } = useTranslation()
-  const role = useWorkspaceStore((state) => state.role)
-  const answers = useWorkspaceStore((state) => state.answers)
-  const workflow = useWorkspaceStore((state) => state.workflow)
-  const workflowState = useWorkspaceStore((state) => state.workflowState)
-  const comments = useWorkspaceStore((state) => state.comments)
-  const requestClarification = useWorkspaceStore((state) => state.requestClarification)
-  const resubmit = useWorkspaceStore((state) => state.resubmit)
-  const approve = useWorkspaceStore((state) => state.approve)
+  const { sandbox, pendingAction, performWorkflowAction } = useSandbox()
 
-  if (!workflowState) return <div />
+  if (!sandbox?.submission) return <div />
+  const role = sandbox.activeRole
+  const submission = sandbox.submission
+  const answers = submission.answers
+  const workflow = sandbox.publishedVersion?.workflow ?? sandbox.workflow
+  const workflowState = submission.workflowState
+  const comments = submission.comments
   const currentNode = workflow.nodes.find((node) => node.id === workflowState.currentNodeId)
   const canReview =
     workflowState.status === 'inReview' && currentNode?.type === 'review' && role === 'reviewer'
   const canRespond = workflowState.status === 'needsClarification' && role === 'applicant'
   const canManage =
     workflowState.status === 'inReview' && currentNode?.type === 'approval' && role === 'management'
+  const action = (input: Parameters<typeof performWorkflowAction>[0]): void => {
+    void performWorkflowAction(input).catch(() => undefined)
+  }
 
   return (
     <div className="review-view view-stack">
       <div className="view-toolbar">
         <div>
           <div className="eyebrow compact">
-            SUBMISSION · FF-{workflowState.history[0]?.id.slice(0, 6).toUpperCase()}
+            SUBMISSION · FF-{submission.id.slice(0, 6).toUpperCase()}
           </div>
           <h1>{t('reviewTitle')}</h1>
           <p>{t('reviewBody')}</p>
@@ -365,7 +422,7 @@ function SubmissionReview(): React.JSX.Element {
           <section className="surface-card request-summary">
             <div className="card-heading-row">
               <div>
-                <span className="card-kicker">FORM VERSION 1</span>
+                <span className="card-kicker">FORM VERSION {submission.formVersion}</span>
                 <h2>{t('requestDetails')}</h2>
               </div>
               <FileText size={22} />
@@ -402,21 +459,21 @@ function SubmissionReview(): React.JSX.Element {
                 </div>
               ) : (
                 comments.map((comment) => (
-                  <article className={`comment ${comment.role}`} key={comment.id}>
+                  <article className={`comment ${comment.actorRole}`} key={comment.id}>
                     <span className="comment-avatar">
                       <UserRound size={17} />
                     </span>
                     <div>
                       <header>
-                        <strong>{t(`roles.${comment.role}`)}</strong>
+                        <strong>{t(`roles.${comment.actorRole}`)}</strong>
                         <time>
-                          {new Date(comment.at).toLocaleTimeString([], {
+                          {new Date(comment.createdAt).toLocaleTimeString([], {
                             hour: '2-digit',
                             minute: '2-digit',
                           })}
                         </time>
                       </header>
-                      {comment.fieldId && (
+                      {comment.anchorFieldId && (
                         <span className="field-anchor"># Business justification</span>
                       )}
                       <p>{comment.message}</p>
@@ -448,13 +505,20 @@ function SubmissionReview(): React.JSX.Element {
                 {comments.length === 0 && (
                   <button
                     className="secondary-button full"
-                    onClick={() => requestClarification(t('clarifyPrompt'))}
+                    disabled={Boolean(pendingAction)}
+                    onClick={() =>
+                      action({ type: 'requestClarification', message: t('clarifyPrompt') })
+                    }
                   >
                     <MessageSquareText size={17} />
                     {t('requestClarification')}
                   </button>
                 )}
-                <button className="primary-button full" onClick={approve}>
+                <button
+                  className="primary-button full"
+                  disabled={Boolean(pendingAction)}
+                  onClick={() => action({ type: 'approve' })}
+                >
                   <Check size={17} />
                   {t('approveOperations')}
                 </button>
@@ -462,13 +526,18 @@ function SubmissionReview(): React.JSX.Element {
             ) : canRespond ? (
               <button
                 className="primary-button full"
-                onClick={() => resubmit(t('applicantResponse'))}
+                disabled={Boolean(pendingAction)}
+                onClick={() => action({ type: 'resubmit', message: t('applicantResponse') })}
               >
                 <Send size={17} />
                 {t('resubmit')}
               </button>
             ) : canManage ? (
-              <button className="primary-button full" onClick={approve}>
+              <button
+                className="primary-button full"
+                disabled={Boolean(pendingAction)}
+                onClick={() => action({ type: 'approve' })}
+              >
                 <ShieldCheck size={17} />
                 {t('approveManagement')}
               </button>
@@ -579,7 +648,8 @@ function localizedPageTitle(id: string, fallback: string, language: string): str
 function localizedDescription(id: string, fallback: string, language: string): string {
   if (language !== 'de') return fallback
   if (id === 'amount') return 'Anträge über 5.000 € benötigen eine Freigabe der Geschäftsleitung.'
-  if (id === 'quote')
+  if (id === 'quote') {
     return 'Demo-Dateien werden mit dieser Sandbox gelöscht. Keine vertraulichen Inhalte hochladen.'
+  }
   return fallback
 }

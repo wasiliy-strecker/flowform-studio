@@ -10,6 +10,7 @@ COPY packages/form-schema/package.json packages/form-schema/package.json
 COPY packages/workflow-schema/package.json packages/workflow-schema/package.json
 COPY packages/realtime-contracts/package.json packages/realtime-contracts/package.json
 COPY packages/api-client/package.json packages/api-client/package.json
+COPY packages/api-contracts/package.json packages/api-contracts/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY . .
@@ -21,4 +22,4 @@ WORKDIR /workspace
 COPY --from=build /workspace /workspace
 USER node
 EXPOSE 3000
-CMD ["node", "apps/api/dist/main.js"]
+CMD ["sh", "-c", "cd apps/api && node node_modules/prisma/build/index.js migrate deploy && node dist/main.js"]

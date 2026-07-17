@@ -1,72 +1,59 @@
+import type { SandboxContract } from '@flowform/api-contracts'
 import {
   FormFieldSchema,
-  createExpenseRequestTemplate,
-  type ActorRole,
   type FormAnswers,
   type FormDefinition,
   type FormField,
   type FormFieldKind,
 } from '@flowform/form-schema'
-import {
-  applyWorkflowAction,
-  createExpenseApprovalWorkflow,
-  startWorkflow,
-  type WorkflowDefinition,
-  type WorkflowState,
-} from '@flowform/workflow-schema'
+import type { WorkflowDefinition } from '@flowform/workflow-schema'
 import { create } from 'zustand'
 
 export type WorkspaceView = 'dashboard' | 'builder' | 'workflow' | 'submission' | 'audit'
 export type ThemeMode = 'light' | 'dark'
+export type SyncPhase = 'idle' | 'saving' | 'saved' | 'conflict' | 'error'
 
-export interface DemoComment {
-  id: string
-  role: ActorRole
-  message: string
-  fieldId?: string
-  at: string
-}
-
-export interface AuditEntry {
-  id: string
-  action: string
-  actorRole: ActorRole
-  target: string
-  at: string
-}
-
-interface FormSnapshot {
+export interface EditableDraft {
   form: FormDefinition
+  workflow: WorkflowDefinition
+  baseRevision: number
+}
+
+interface DraftSnapshot {
+  draft: EditableDraft
   selectedFieldId: string | undefined
+  selectedWorkflowNodeId: string | undefined
 }
 
 interface WorkspaceState {
-  sandboxId: string
   view: WorkspaceView
-  role: ActorRole
   theme: ThemeMode
-  form: FormDefinition
-  workflow: WorkflowDefinition
   selectedFieldId: string | undefined
   selectedWorkflowNodeId: string | undefined
   pageIndex: number
-  publishedAt: string | undefined
-  publishedRevision: number | undefined
-  revision: number
+  draft: EditableDraft | undefined
   answers: FormAnswers
-  submissionId: string | undefined
-  workflowState: WorkflowState | undefined
-  comments: DemoComment[]
-  auditEntries: AuditEntry[]
-  past: FormSnapshot[]
-  future: FormSnapshot[]
+  dirty: boolean
+  editVersion: number
+  syncPhase: SyncPhase
+  syncMessage: string | undefined
+  conflictRevision: number | undefined
+  savedAt: string | undefined
+  past: DraftSnapshot[]
+  future: DraftSnapshot[]
   visitedViews: WorkspaceView[]
   setView: (view: WorkspaceView) => void
-  setRole: (role: ActorRole) => void
   toggleTheme: () => void
   setPageIndex: (index: number) => void
   selectField: (fieldId?: string) => void
   selectWorkflowNode: (nodeId?: string) => void
+  hydrateSandbox: (sandbox: SandboxContract, force?: boolean) => void
+  markSaving: () => void
+  markSaved: (sandbox: SandboxContract, savedEditVersion: number) => void
+  markConflict: (actualRevision: number, message: string) => void
+  markSyncError: (message: string) => void
+  rebaseLocalDraft: (actualRevision: number) => void
+  discardLocalDraft: (sandbox: SandboxContract) => void
   addField: (kind: FormFieldKind, index?: number) => void
   moveField: (activeId: string, overId: string) => void
   updateSelectedField: (patch: { label?: string; description?: string; required?: boolean }) => void
@@ -74,19 +61,260 @@ interface WorkspaceState {
   updateWorkflowNodePosition: (nodeId: string, position: { x: number; y: number }) => void
   undo: () => void
   redo: () => void
-  publish: () => void
   updateAnswers: (answers: FormAnswers) => void
-  submit: () => void
-  requestClarification: (message: string) => void
-  resubmit: (message: string) => void
-  approve: () => void
 }
 
-const now = (): string => new Date().toISOString()
-const identifier = (): string => crypto.randomUUID()
+const initialAnswers: FormAnswers = {
+  applicantName: 'Alex Morgan',
+  applicantEmail: 'alex.morgan@example.com',
+  amount: 6_500,
+  category: 'equipment',
+  justification: 'Replace two outdated design workstations used by the product team.',
+  confirmation: true,
+  signature: 'demo-confirmation',
+}
+
+const initialState = {
+  view: 'dashboard' as WorkspaceView,
+  theme: 'dark' as ThemeMode,
+  selectedFieldId: undefined,
+  selectedWorkflowNodeId: undefined,
+  pageIndex: 0,
+  draft: undefined,
+  answers: initialAnswers,
+  dirty: false,
+  editVersion: 0,
+  syncPhase: 'idle' as SyncPhase,
+  syncMessage: undefined,
+  conflictRevision: undefined,
+  savedAt: undefined,
+  past: [] as DraftSnapshot[],
+  future: [] as DraftSnapshot[],
+  visitedViews: ['dashboard'] as WorkspaceView[],
+}
+
+export const useWorkspaceStore = create<WorkspaceState>((set) => ({
+  ...initialState,
+
+  setView: (view) =>
+    set((state) => ({
+      view,
+      visitedViews: state.visitedViews.includes(view)
+        ? state.visitedViews
+        : [...state.visitedViews, view],
+    })),
+  toggleTheme: () => set((state) => ({ theme: state.theme === 'dark' ? 'light' : 'dark' })),
+  setPageIndex: (pageIndex) => set({ pageIndex, selectedFieldId: undefined }),
+  selectField: (selectedFieldId) => set({ selectedFieldId }),
+  selectWorkflowNode: (selectedWorkflowNodeId) => set({ selectedWorkflowNodeId }),
+
+  hydrateSandbox: (sandbox, force = false) =>
+    set((state) => {
+      if (state.draft && !force && (state.dirty || state.syncPhase === 'saving')) return state
+      return {
+        draft: draftFrom(sandbox),
+        selectedFieldId: state.selectedFieldId ?? firstSelectableFieldId(sandbox.form) ?? undefined,
+        selectedWorkflowNodeId:
+          state.selectedWorkflowNodeId ?? sandbox.workflow.nodes[0]?.id ?? undefined,
+        dirty: false,
+        syncPhase: 'saved',
+        syncMessage: undefined,
+        conflictRevision: undefined,
+        past: force ? [] : state.past,
+        future: force ? [] : state.future,
+      }
+    }),
+  markSaving: () => set({ syncPhase: 'saving', syncMessage: undefined }),
+  markSaved: (sandbox, savedEditVersion) =>
+    set((state) => {
+      if (state.editVersion !== savedEditVersion && state.draft) {
+        return {
+          draft: { ...state.draft, baseRevision: sandbox.revision },
+          dirty: true,
+          syncPhase: 'idle',
+          syncMessage: undefined,
+          conflictRevision: undefined,
+        }
+      }
+      return {
+        draft: draftFrom(sandbox),
+        dirty: false,
+        syncPhase: 'saved',
+        syncMessage: undefined,
+        conflictRevision: undefined,
+        savedAt: new Date().toISOString(),
+      }
+    }),
+  markConflict: (actualRevision, message) =>
+    set({
+      syncPhase: 'conflict',
+      syncMessage: message,
+      conflictRevision: actualRevision,
+    }),
+  markSyncError: (syncMessage) => set({ syncPhase: 'error', syncMessage }),
+  rebaseLocalDraft: (actualRevision) =>
+    set((state) => ({
+      draft: state.draft ? { ...state.draft, baseRevision: actualRevision } : undefined,
+      dirty: Boolean(state.draft),
+      syncPhase: 'idle',
+      syncMessage: undefined,
+      conflictRevision: undefined,
+    })),
+  discardLocalDraft: (sandbox) =>
+    set({
+      draft: draftFrom(sandbox),
+      dirty: false,
+      syncPhase: 'saved',
+      syncMessage: undefined,
+      conflictRevision: undefined,
+      past: [],
+      future: [],
+    }),
+
+  addField: (kind, index) =>
+    set((state) => {
+      if (!state.draft) return state
+      const next = structuredClone(state.draft)
+      const page = next.form.pages[state.pageIndex]
+      if (!page) return state
+      const field = createDefaultField(kind)
+      page.fields.splice(index ?? page.fields.length, 0, field)
+      return edited(state, next, { selectedFieldId: field.id })
+    }),
+
+  moveField: (activeId, overId) =>
+    set((state) => {
+      if (!state.draft) return state
+      const next = structuredClone(state.draft)
+      const page = next.form.pages[state.pageIndex]
+      if (!page) return state
+      const from = page.fields.findIndex((field) => field.id === activeId)
+      const to = page.fields.findIndex((field) => field.id === overId)
+      if (from < 0 || to < 0 || from === to) return state
+      const [moved] = page.fields.splice(from, 1)
+      if (!moved) return state
+      page.fields.splice(to, 0, moved)
+      return edited(state, next)
+    }),
+
+  updateSelectedField: (patch) =>
+    set((state) => {
+      if (!state.draft || !state.selectedFieldId) return state
+      const next = structuredClone(state.draft)
+      for (const page of next.form.pages) {
+        const index = page.fields.findIndex((field) => field.id === state.selectedFieldId)
+        if (index < 0) continue
+        const current = page.fields[index]
+        if (!current) return state
+        const safePatch = current.kind === 'section' ? { ...patch, required: false } : patch
+        const parsed = FormFieldSchema.safeParse({ ...current, ...safePatch })
+        if (!parsed.success) return state
+        page.fields[index] = parsed.data
+        return edited(state, next)
+      }
+      return state
+    }),
+
+  deleteSelectedField: () =>
+    set((state) => {
+      if (!state.draft || !state.selectedFieldId) return state
+      const next = structuredClone(state.draft)
+      for (const page of next.form.pages) {
+        const index = page.fields.findIndex((field) => field.id === state.selectedFieldId)
+        if (index < 0) continue
+        page.fields.splice(index, 1)
+        return edited(state, next, { selectedFieldId: undefined })
+      }
+      return state
+    }),
+
+  updateWorkflowNodePosition: (nodeId, position) =>
+    set((state) => {
+      if (!state.draft) return state
+      const next = structuredClone(state.draft)
+      next.workflow.nodes = next.workflow.nodes.map((node) =>
+        node.id === nodeId ? { ...node, position } : node,
+      )
+      return edited(state, next)
+    }),
+
+  undo: () =>
+    set((state) => {
+      const previous = state.past.at(-1)
+      if (!previous || !state.draft) return state
+      return {
+        draft: structuredClone(previous.draft),
+        selectedFieldId: previous.selectedFieldId,
+        selectedWorkflowNodeId: previous.selectedWorkflowNodeId,
+        past: state.past.slice(0, -1),
+        future: [snapshot(state), ...state.future].slice(0, 100),
+        dirty: true,
+        editVersion: state.editVersion + 1,
+        syncPhase: state.syncPhase === 'conflict' ? 'conflict' : 'idle',
+      }
+    }),
+
+  redo: () =>
+    set((state) => {
+      const next = state.future[0]
+      if (!next || !state.draft) return state
+      return {
+        draft: structuredClone(next.draft),
+        selectedFieldId: next.selectedFieldId,
+        selectedWorkflowNodeId: next.selectedWorkflowNodeId,
+        past: [...state.past.slice(-99), snapshot(state)],
+        future: state.future.slice(1),
+        dirty: true,
+        editVersion: state.editVersion + 1,
+        syncPhase: state.syncPhase === 'conflict' ? 'conflict' : 'idle',
+      }
+    }),
+
+  updateAnswers: (answers) => set({ answers }),
+}))
+
+function edited(
+  state: WorkspaceState,
+  draft: EditableDraft,
+  extra: Partial<Pick<WorkspaceState, 'selectedFieldId' | 'selectedWorkflowNodeId'>> = {},
+): Partial<WorkspaceState> {
+  return {
+    draft,
+    ...extra,
+    dirty: true,
+    editVersion: state.editVersion + 1,
+    past: [...state.past.slice(-99), snapshot(state)],
+    future: [],
+    syncPhase: state.syncPhase === 'conflict' ? 'conflict' : 'idle',
+    syncMessage: state.syncPhase === 'conflict' ? state.syncMessage : undefined,
+  }
+}
+
+function snapshot(
+  state: Pick<WorkspaceState, 'draft' | 'selectedFieldId' | 'selectedWorkflowNodeId'>,
+): DraftSnapshot {
+  if (!state.draft) throw new Error('Cannot snapshot an uninitialized workspace.')
+  return {
+    draft: structuredClone(state.draft),
+    selectedFieldId: state.selectedFieldId,
+    selectedWorkflowNodeId: state.selectedWorkflowNodeId,
+  }
+}
+
+function draftFrom(sandbox: SandboxContract): EditableDraft {
+  return {
+    form: structuredClone(sandbox.form),
+    workflow: structuredClone(sandbox.workflow),
+    baseRevision: sandbox.revision,
+  }
+}
+
+function firstSelectableFieldId(form: FormDefinition): string | undefined {
+  return form.pages.flatMap((page) => page.fields)[0]?.id
+}
 
 function createDefaultField(kind: FormFieldKind): FormField {
-  const id = `${kind}-${identifier().slice(0, 8)}`
+  const id = `${kind}-${crypto.randomUUID().slice(0, 8)}`
   const common = { id, kind, label: `New ${kind}`, required: false }
   switch (kind) {
     case 'text':
@@ -118,299 +346,10 @@ function createDefaultField(kind: FormFieldKind): FormField {
   }
 }
 
-function snapshot(state: Pick<WorkspaceState, 'form' | 'selectedFieldId'>): FormSnapshot {
-  return {
-    form: structuredClone(state.form),
-    selectedFieldId: state.selectedFieldId,
-  }
-}
-
-function audit(action: string, actorRole: ActorRole, target: string): AuditEntry {
-  return { id: identifier(), action, actorRole, target, at: now() }
-}
-
-const initialAnswers: FormAnswers = {
-  applicantName: 'Alex Morgan',
-  applicantEmail: 'alex.morgan@example.com',
-  amount: 6_500,
-  category: 'equipment',
-  justification: 'Replace two outdated design workstations used by the product team.',
-  confirmation: true,
-  signature: 'demo-confirmation',
-}
-
-export const useWorkspaceStore = create<WorkspaceState>((set) => ({
-  sandboxId: identifier(),
-  view: 'dashboard',
-  role: 'designer',
-  theme: 'dark',
-  form: createExpenseRequestTemplate(),
-  workflow: createExpenseApprovalWorkflow(),
-  selectedFieldId: 'amount',
-  selectedWorkflowNodeId: 'amount-decision',
-  pageIndex: 0,
-  publishedAt: undefined,
-  publishedRevision: undefined,
-  revision: 3,
-  answers: initialAnswers,
-  submissionId: undefined,
-  workflowState: undefined,
-  comments: [],
-  auditEntries: [],
-  past: [],
-  future: [],
-  visitedViews: ['dashboard'],
-
-  setView: (view) =>
-    set((state) => ({
-      view,
-      visitedViews: state.visitedViews.includes(view)
-        ? state.visitedViews
-        : [...state.visitedViews, view],
-    })),
-  setRole: (role) => set({ role }),
-  toggleTheme: () => set((state) => ({ theme: state.theme === 'dark' ? 'light' : 'dark' })),
-  setPageIndex: (pageIndex) => set({ pageIndex, selectedFieldId: undefined }),
-  selectField: (selectedFieldId) => set({ selectedFieldId }),
-  selectWorkflowNode: (selectedWorkflowNodeId) => set({ selectedWorkflowNodeId }),
-
-  addField: (kind, index) =>
-    set((state) => {
-      const next = structuredClone(state.form)
-      const page = next.pages[state.pageIndex]
-      if (!page) return state
-      const field = createDefaultField(kind)
-      page.fields.splice(index ?? page.fields.length, 0, field)
-      return {
-        form: next,
-        selectedFieldId: field.id,
-        revision: state.revision + 1,
-        past: [...state.past.slice(-99), snapshot(state)],
-        future: [],
-      }
-    }),
-
-  moveField: (activeId, overId) =>
-    set((state) => {
-      const next = structuredClone(state.form)
-      const page = next.pages[state.pageIndex]
-      if (!page) return state
-      const from = page.fields.findIndex((field) => field.id === activeId)
-      const to = page.fields.findIndex((field) => field.id === overId)
-      if (from < 0 || to < 0 || from === to) return state
-      const [moved] = page.fields.splice(from, 1)
-      if (!moved) return state
-      page.fields.splice(to, 0, moved)
-      return {
-        form: next,
-        revision: state.revision + 1,
-        past: [...state.past.slice(-99), snapshot(state)],
-        future: [],
-      }
-    }),
-
-  updateSelectedField: (patch) =>
-    set((state) => {
-      if (!state.selectedFieldId) return state
-      const next = structuredClone(state.form)
-      for (const page of next.pages) {
-        const index = page.fields.findIndex((field) => field.id === state.selectedFieldId)
-        if (index < 0) continue
-        const current = page.fields[index]
-        if (!current) return state
-        const safePatch = current.kind === 'section' ? { ...patch, required: false } : patch
-        page.fields[index] = FormFieldSchema.parse({ ...current, ...safePatch })
-        return {
-          form: next,
-          revision: state.revision + 1,
-          past: [...state.past.slice(-99), snapshot(state)],
-          future: [],
-        }
-      }
-      return state
-    }),
-
-  deleteSelectedField: () =>
-    set((state) => {
-      if (!state.selectedFieldId) return state
-      const next = structuredClone(state.form)
-      for (const page of next.pages) {
-        const index = page.fields.findIndex((field) => field.id === state.selectedFieldId)
-        if (index < 0) continue
-        page.fields.splice(index, 1)
-        return {
-          form: next,
-          selectedFieldId: undefined,
-          revision: state.revision + 1,
-          past: [...state.past.slice(-99), snapshot(state)],
-          future: [],
-        }
-      }
-      return state
-    }),
-
-  updateWorkflowNodePosition: (nodeId, position) =>
-    set((state) => ({
-      workflow: {
-        ...state.workflow,
-        nodes: state.workflow.nodes.map((node) =>
-          node.id === nodeId ? { ...node, position } : node,
-        ),
-      },
-      revision: state.revision + 1,
-    })),
-
-  undo: () =>
-    set((state) => {
-      const previous = state.past.at(-1)
-      if (!previous) return state
-      return {
-        form: structuredClone(previous.form),
-        selectedFieldId: previous.selectedFieldId,
-        past: state.past.slice(0, -1),
-        future: [snapshot(state), ...state.future].slice(0, 100),
-        revision: state.revision + 1,
-      }
-    }),
-
-  redo: () =>
-    set((state) => {
-      const next = state.future[0]
-      if (!next) return state
-      return {
-        form: structuredClone(next.form),
-        selectedFieldId: next.selectedFieldId,
-        past: [...state.past.slice(-99), snapshot(state)],
-        future: state.future.slice(1),
-        revision: state.revision + 1,
-      }
-    }),
-
-  publish: () =>
-    set((state) => {
-      const at = now()
-      return {
-        publishedAt: at,
-        publishedRevision: state.revision,
-        auditEntries: [
-          audit('form.versionPublished', state.role, state.form.title),
-          ...state.auditEntries,
-        ],
-      }
-    }),
-
-  updateAnswers: (answers) => set({ answers }),
-
-  submit: () =>
-    set((state) => {
-      const at = now()
-      const submissionId = identifier()
-      return {
-        submissionId,
-        workflowState: startWorkflow(state.workflow, state.answers, at, identifier()),
-        auditEntries: [
-          audit('submission.created', 'applicant', submissionId),
-          audit('workflow.started', 'applicant', state.workflow.name),
-          ...state.auditEntries,
-        ],
-      }
-    }),
-
-  requestClarification: (message) =>
-    set((state) => {
-      if (!state.workflowState || !state.submissionId) return state
-      const at = now()
-      return {
-        workflowState: applyWorkflowAction(
-          state.workflow,
-          state.workflowState,
-          {
-            type: 'requestClarification',
-            actorRole: state.role,
-            at,
-            id: identifier(),
-            message,
-          },
-          state.answers,
-        ),
-        comments: [
-          ...state.comments,
-          {
-            id: identifier(),
-            role: state.role,
-            message,
-            fieldId: 'justification',
-            at,
-          },
-        ],
-        auditEntries: [
-          audit('workflow.clarificationRequested', state.role, state.submissionId),
-          ...state.auditEntries,
-        ],
-      }
-    }),
-
-  resubmit: (message) =>
-    set((state) => {
-      if (!state.workflowState || !state.submissionId) return state
-      const at = now()
-      return {
-        workflowState: applyWorkflowAction(
-          state.workflow,
-          state.workflowState,
-          { type: 'resubmit', actorRole: state.role, at, id: identifier(), message },
-          state.answers,
-        ),
-        comments: [...state.comments, { id: identifier(), role: state.role, message, at }],
-        auditEntries: [
-          audit('submission.resubmitted', state.role, state.submissionId),
-          ...state.auditEntries,
-        ],
-      }
-    }),
-
-  approve: () =>
-    set((state) => {
-      if (!state.workflowState || !state.submissionId) return state
-      const next = applyWorkflowAction(
-        state.workflow,
-        state.workflowState,
-        { type: 'approve', actorRole: state.role, at: now(), id: identifier() },
-        state.answers,
-      )
-      return {
-        workflowState: next,
-        auditEntries: [
-          audit(
-            next.status === 'approved' ? 'submission.approved' : 'workflow.taskApproved',
-            state.role,
-            state.submissionId,
-          ),
-          ...state.auditEntries,
-        ],
-      }
-    }),
-}))
-
 export function resetWorkspaceStore(): void {
   useWorkspaceStore.setState({
-    sandboxId: identifier(),
-    view: 'dashboard',
-    role: 'designer',
-    theme: 'dark',
-    form: createExpenseRequestTemplate(),
-    workflow: createExpenseApprovalWorkflow(),
-    selectedFieldId: 'amount',
-    selectedWorkflowNodeId: 'amount-decision',
-    pageIndex: 0,
-    publishedAt: undefined,
-    publishedRevision: undefined,
-    revision: 3,
-    answers: initialAnswers,
-    submissionId: undefined,
-    workflowState: undefined,
-    comments: [],
-    auditEntries: [],
+    ...initialState,
+    answers: structuredClone(initialAnswers),
     past: [],
     future: [],
     visitedViews: ['dashboard'],

@@ -17,6 +17,7 @@ import { Check, GitBranch, Play, ShieldCheck, UserRoundCheck } from 'lucide-reac
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useSandbox } from '../sandbox'
 import { useWorkspaceStore } from '../store'
 
 interface StudioNodeData extends Record<string, unknown> {
@@ -32,16 +33,17 @@ const nodeTypes = { studio: StudioWorkflowNode }
 
 export function WorkflowView(): React.JSX.Element {
   const { t } = useTranslation()
-  const workflow = useWorkspaceStore((state) => state.workflow)
+  const { sandbox, publishDraft, pendingAction } = useSandbox()
+  const draft = useWorkspaceStore((state) => state.draft)
+  const workflow = draft?.workflow ?? sandbox?.workflow
   const selectedNodeId = useWorkspaceStore((state) => state.selectedWorkflowNodeId)
   const selectNode = useWorkspaceStore((state) => state.selectWorkflowNode)
   const updatePosition = useWorkspaceStore((state) => state.updateWorkflowNodePosition)
-  const publish = useWorkspaceStore((state) => state.publish)
-  const issues = validateWorkflow(workflow)
+  const issues = workflow ? validateWorkflow(workflow) : []
 
   const nodes = useMemo<StudioNode[]>(
     () =>
-      workflow.nodes.map((node) => ({
+      (workflow?.nodes ?? []).map((node) => ({
         id: node.id,
         type: 'studio',
         position: node.position,
@@ -53,12 +55,12 @@ export function WorkflowView(): React.JSX.Element {
           ...('outcome' in node.data ? { outcome: node.data.outcome } : {}),
         },
       })),
-    [selectedNodeId, workflow.nodes],
+    [selectedNodeId, workflow?.nodes],
   )
 
   const edges = useMemo<Edge[]>(
     () =>
-      workflow.edges.map((edge) => ({
+      (workflow?.edges ?? []).map((edge) => ({
         id: edge.id,
         source: edge.source,
         target: edge.target,
@@ -72,10 +74,17 @@ export function WorkflowView(): React.JSX.Element {
         labelStyle: { fill: '#9b9fb3', fontWeight: 700, fontSize: 11 },
         labelBgStyle: { fill: '#151722', fillOpacity: 0.94 },
       })),
-    [workflow.edges],
+    [workflow?.edges],
   )
 
-  const selectedNode = workflow.nodes.find((node) => node.id === selectedNodeId)
+  const selectedNode = workflow?.nodes.find((node) => node.id === selectedNodeId)
+
+  if (!workflow)
+    return (
+      <div className="view-loading">
+        <span /> {t('loadingWorkspace')}
+      </div>
+    )
 
   return (
     <div className="workflow-view view-stack">
@@ -85,9 +94,13 @@ export function WorkflowView(): React.JSX.Element {
           <h1>{t('workflowTitle')}</h1>
           <p>{t('workflowBody')}</p>
         </div>
-        <button className="primary-button small" onClick={publish}>
+        <button
+          className="primary-button small"
+          onClick={() => void publishDraft().catch(() => undefined)}
+          disabled={pendingAction === 'publish'}
+        >
           <ShieldCheck size={16} />
-          {t('publish')}
+          {pendingAction === 'publish' ? t('publishing') : t('publish')}
         </button>
       </div>
 
