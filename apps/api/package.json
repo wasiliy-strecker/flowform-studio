@@ -1,0 +1,42 @@
+{
+  "name": "@flowform/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx watch src/main.ts",
+    "lint": "eslint src test prisma.config.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@flowform/form-schema": "workspace:*",
+    "@flowform/realtime-contracts": "workspace:*",
+    "@flowform/workflow-schema": "workspace:*",
+    "@nestjs/common": "^11.1.28",
+    "@nestjs/core": "^11.1.28",
+    "@nestjs/platform-express": "^11.1.28",
+    "@nestjs/platform-socket.io": "^11.1.28",
+    "@nestjs/swagger": "^11.4.5",
+    "@nestjs/websockets": "^11.1.28",
+    "@prisma/client": "^7.8.0",
+    "bullmq": "^5.80.5",
+    "ioredis": "^5.11.1",
+    "minio": "^8.0.7",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "socket.io": "^4.8.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.1.0",
+    "prisma": "^7.8.0",
+    "supertest": "^7.2.2",
+    "tsx": "^4.21.0",
+    "vitest": "^4.1.10"
+  }
+}

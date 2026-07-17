@@ -1,0 +1,23 @@
+{
+  "name": "@flowform/realtime-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint src",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@flowform/form-schema": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.10"
+  }
+}

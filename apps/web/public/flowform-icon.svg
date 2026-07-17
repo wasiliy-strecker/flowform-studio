@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="FlowForm Studio">
+  <defs>
+    <linearGradient id="bg" x1="60" y1="40" x2="450" y2="470" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7777f5"/>
+      <stop offset="1" stop-color="#4a35bf"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <path d="M146 135h220v54H200v62h137v53H200v73h-54V135Z" fill="white"/>
+  <circle cx="363" cy="350" r="31" fill="#70e1c1"/>
+</svg>
