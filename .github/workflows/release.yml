@@ -54,5 +54,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME"
           --verify-tag
           --latest
-          --title "FlowForm Studio PRO ${GITHUB_REF_NAME} — Vertical MVP"
+          --title "FlowForm Studio PRO ${GITHUB_REF_NAME}"
           --notes-file ".github/releases/${GITHUB_REF_NAME}.md"
