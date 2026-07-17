@@ -23,7 +23,7 @@
     "@nestjs/swagger": "^11.4.5",
     "@nestjs/websockets": "^11.1.28",
     "@prisma/client": "^7.8.0",
-    "bullmq": "^5.80.5",
+    "bullmq": "^5.80.6",
     "ioredis": "^5.11.1",
     "minio": "^8.0.7",
     "reflect-metadata": "^0.2.2",
