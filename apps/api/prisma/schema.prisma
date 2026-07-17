@@ -1,0 +1,219 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MembershipRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum FormStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum SubmissionStatus {
+  DRAFT
+  IN_REVIEW
+  NEEDS_CLARIFICATION
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id           String       @id @default(uuid()) @db.Uuid
+  email        String       @unique
+  displayName  String
+  passwordHash String?
+  createdAt    DateTime     @default(now())
+  memberships Membership[]
+  comments     Comment[]
+  auditEvents  AuditEvent[]
+}
+
+model Organization {
+  id           String       @id @default(uuid()) @db.Uuid
+  name         String
+  slug         String       @unique
+  createdAt    DateTime     @default(now())
+  memberships Membership[]
+  projects     Project[]
+  sandbox      DemoSandbox?
+  auditEvents  AuditEvent[]
+}
+
+model Membership {
+  id             String         @id @default(uuid()) @db.Uuid
+  userId         String         @db.Uuid
+  organizationId String         @db.Uuid
+  role           MembershipRole
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+model Project {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  name           String
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  forms          Form[]
+
+  @@index([organizationId])
+}
+
+model Form {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  projectId      String        @db.Uuid
+  title          String
+  slug           String
+  status         FormStatus    @default(DRAFT)
+  revision       Int           @default(1)
+  draftSchema    Json
+  draftWorkflow  Json
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  project        Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versions       FormVersion[]
+  submissions    Submission[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+  @@index([projectId])
+}
+
+model FormVersion {
+  id                 String       @id @default(uuid()) @db.Uuid
+  formId             String       @db.Uuid
+  version            Int
+  formSchema         Json
+  workflowDefinition Json
+  publishedAt        DateTime     @default(now())
+  form               Form         @relation(fields: [formId], references: [id], onDelete: Cascade)
+  submissions        Submission[]
+
+  @@unique([formId, version])
+}
+
+model Submission {
+  id             String           @id @default(uuid()) @db.Uuid
+  organizationId String           @db.Uuid
+  formId         String           @db.Uuid
+  formVersionId  String           @db.Uuid
+  status         SubmissionStatus @default(IN_REVIEW)
+  answers        Json
+  revision       Int              @default(1)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  form           Form             @relation(fields: [formId], references: [id], onDelete: Restrict)
+  formVersion    FormVersion      @relation(fields: [formVersionId], references: [id], onDelete: Restrict)
+  workflow       WorkflowInstance?
+  comments       Comment[]
+  attachments    Attachment[]
+
+  @@index([organizationId, status])
+  @@index([formId])
+}
+
+model WorkflowInstance {
+  id               String       @id @default(uuid()) @db.Uuid
+  submissionId     String       @unique @db.Uuid
+  currentNodeId    String
+  state            Json
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  submission       Submission   @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  tasks            WorkflowTask[]
+}
+
+model WorkflowTask {
+  id                 String           @id @default(uuid()) @db.Uuid
+  workflowInstanceId String           @db.Uuid
+  nodeId             String
+  assigneeRole       String
+  status             SubmissionStatus
+  completedAt        DateTime?
+  workflowInstance   WorkflowInstance @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
+
+  @@index([workflowInstanceId])
+}
+
+model Comment {
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @db.Uuid
+  submissionId   String     @db.Uuid
+  authorId       String     @db.Uuid
+  anchorFieldId  String?
+  anchorNodeId   String?
+  body           String
+  createdAt      DateTime   @default(now())
+  submission     Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  author         User       @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, submissionId])
+}
+
+model Attachment {
+  id             String     @id @default(uuid()) @db.Uuid
+  organizationId String     @db.Uuid
+  submissionId   String     @db.Uuid
+  objectKey      String     @unique
+  originalName   String
+  mediaType      String
+  sizeBytes      Int
+  createdAt      DateTime   @default(now())
+  submission     Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, submissionId])
+}
+
+model AuditEvent {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String        @db.Uuid
+  actorId        String?       @db.Uuid
+  action         String
+  targetType     String
+  targetId       String
+  correlationId  String
+  payload        Json?
+  occurredAt     DateTime      @default(now())
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor          User?         @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, occurredAt])
+  @@index([correlationId])
+}
+
+model OutboxEvent {
+  id            String    @id @default(uuid()) @db.Uuid
+  aggregateType String
+  aggregateId   String
+  eventType     String
+  payload       Json
+  createdAt     DateTime  @default(now())
+  publishedAt   DateTime?
+
+  @@index([publishedAt, createdAt])
+}
+
+model DemoSandbox {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @unique @db.Uuid
+  tokenHash      String       @unique
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}

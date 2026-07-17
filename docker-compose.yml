@@ -1,0 +1,116 @@
+name: flowform-studio
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: flowform
+      POSTGRES_USER: flowform
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flowform-local-only}
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U flowform -d flowform']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - redis-data:/data
+
+  minio:
+    image: quay.io/minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-flowform}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-flowform-local-secret}
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 8s
+      timeout: 4s
+      retries: 12
+    volumes:
+      - minio-data:/data
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_PORT: 3000
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:4173}
+      DATABASE_URL: postgresql://flowform:${POSTGRES_PASSWORD:-flowform-local-only}@postgres:5432/flowform
+      REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-flowform}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-flowform-local-secret}
+      MINIO_BUCKET: flowform-uploads
+      SANDBOX_TTL_HOURS: 24
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 8s
+      timeout: 4s
+      retries: 12
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://127.0.0.1/']
+      interval: 8s
+      timeout: 4s
+      retries: 12
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    environment:
+      FLOWFORM_DOMAIN: ${FLOWFORM_DOMAIN:-http://localhost}
+    ports:
+      - '${WEB_PORT:-4173}:80'
+      - '${HTTPS_PORT:-4443}:443'
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  caddy-data:
+  caddy-config:

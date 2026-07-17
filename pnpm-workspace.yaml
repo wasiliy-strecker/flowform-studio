@@ -1,0 +1,14 @@
+packages:
+  - apps/*
+  - packages/*
+allowBuilds:
+  '@prisma/engines': true
+  '@scarf/scarf': false
+  esbuild: true
+  msgpackr-extract: true
+  prisma: true
+minimumReleaseAgeExclude:
+  - bullmq@5.80.5
+  - immer@11.1.15
+  - react-i18next@17.0.10
+  - vite@8.1.5
