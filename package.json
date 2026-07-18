@@ -1,6 +1,6 @@
 {
   "name": "flowform-studio",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "A visual studio for forms, approvals, and collaborative workflows",
   "license": "PolyForm-Noncommercial-1.0.0",

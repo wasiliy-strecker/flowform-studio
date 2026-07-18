@@ -30,16 +30,19 @@ export class SandboxCleanupService implements OnModuleInit, OnModuleDestroy {
     if (this.running) return []
     this.running = true
     try {
-      const expiredIds = await this.repository.deleteExpired(now)
+      const expiredIds = await this.repository.listExpired(now)
+      const deletedIds: string[] = []
       for (const sandboxId of expiredIds) {
         try {
           await this.uploads.deleteSandbox(sandboxId)
+          await this.repository.delete(sandboxId)
+          deletedIds.push(sandboxId)
         } catch (error) {
           this.logger.error({ sandboxId, error: error instanceof Error ? error.message : error })
         }
       }
-      if (expiredIds.length > 0) this.logger.log({ deletedSandboxes: expiredIds.length })
-      return expiredIds
+      if (deletedIds.length > 0) this.logger.log({ deletedSandboxes: deletedIds.length })
+      return deletedIds
     } finally {
       this.running = false
     }

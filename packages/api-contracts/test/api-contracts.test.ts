@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { SandboxSessionSchema } from '../src'
 
 describe('API contracts', () => {
-  it('rejects a session without the durable aggregate collections', () => {
+  it('rejects a session without the durable aggregate collections and version count', () => {
     const result = SandboxSessionSchema.safeParse({
       accessToken: 'a'.repeat(43),
       sandbox: {

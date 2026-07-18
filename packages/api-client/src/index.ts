@@ -1,11 +1,15 @@
 import {
   ApiProblemSchema,
   HealthResponseSchema,
+  PublishedFormVersionListSchema,
+  PublishedFormVersionSchema,
   SandboxContractSchema,
   SandboxSessionSchema,
   StoredAttachmentSchema,
   type ApiProblem,
   type HealthResponse,
+  type PublishedFormVersion,
+  type PublishedFormVersionSummary,
   type SandboxContract,
   type SandboxSession,
   type StoredAttachment,
@@ -18,6 +22,8 @@ import type { z } from 'zod'
 export type {
   ApiProblem,
   HealthResponse,
+  PublishedFormVersion,
+  PublishedFormVersionSummary,
   SandboxContract,
   SandboxSession,
   StoredAttachment,
@@ -64,6 +70,31 @@ export class FlowFormApiClient {
 
   getSandbox(sandboxId: string, accessToken: string): Promise<SandboxContract> {
     return this.request(SandboxContractSchema, `/sandboxes/${sandboxId}`, {}, accessToken)
+  }
+
+  listPublishedVersions(
+    sandboxId: string,
+    accessToken: string,
+  ): Promise<PublishedFormVersionSummary[]> {
+    return this.request(
+      PublishedFormVersionListSchema,
+      `/sandboxes/${sandboxId}/versions`,
+      {},
+      accessToken,
+    )
+  }
+
+  getPublishedVersion(
+    sandboxId: string,
+    accessToken: string,
+    version: number,
+  ): Promise<PublishedFormVersion> {
+    return this.request(
+      PublishedFormVersionSchema,
+      `/sandboxes/${sandboxId}/versions/${version}`,
+      {},
+      accessToken,
+    )
   }
 
   changeRole(sandboxId: string, accessToken: string, role: ActorRole): Promise<SandboxContract> {

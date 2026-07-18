@@ -8,8 +8,8 @@ import type {
 
 interface MemoryOutboxEntry {
   event: SandboxChangedEvent
-  publishedAt?: string
-  attempts: number
+  relayedAt?: string
+  relayAttempts: number
 }
 
 export class MemorySandboxRepository implements SandboxRepository {
@@ -19,7 +19,7 @@ export class MemorySandboxRepository implements SandboxRepository {
 
   create(sandbox: StoredSandbox, event: SandboxChangedEvent): Promise<void> {
     this.sandboxes.set(sandbox.id, structuredClone(sandbox))
-    this.outbox.set(event.id, { event: structuredClone(event), attempts: 0 })
+    this.outbox.set(event.id, { event: structuredClone(event), relayAttempts: 0 })
     return Promise.resolve()
   }
 
@@ -37,7 +37,7 @@ export class MemorySandboxRepository implements SandboxRepository {
     this.sandboxes.set(change.sandbox.id, structuredClone(change.sandbox))
     this.outbox.set(change.event.id, {
       event: structuredClone(change.event),
-      attempts: 0,
+      relayAttempts: 0,
     })
     return Promise.resolve(true)
   }
@@ -50,34 +50,33 @@ export class MemorySandboxRepository implements SandboxRepository {
     return Promise.resolve()
   }
 
-  async deleteExpired(now: Date): Promise<string[]> {
-    const deleted: string[] = []
+  listExpired(now: Date): Promise<string[]> {
+    const expired: string[] = []
     for (const [id, sandbox] of this.sandboxes) {
       if (Date.parse(sandbox.expiresAt) > now.getTime()) continue
-      deleted.push(id)
-      await this.delete(id)
+      expired.push(id)
     }
-    return deleted
+    return Promise.resolve(expired)
   }
 
   listPendingEvents(limit: number): Promise<SandboxChangedEvent[]> {
     return Promise.resolve(
       [...this.outbox.values()]
-        .filter((entry) => !entry.publishedAt)
+        .filter((entry) => !entry.relayedAt)
         .slice(0, limit)
         .map((entry) => structuredClone(entry.event)),
     )
   }
 
-  recordEventAttempt(id: string): Promise<void> {
+  recordRelayAttempt(id: string): Promise<void> {
     const entry = this.outbox.get(id)
-    if (entry) entry.attempts += 1
+    if (entry) entry.relayAttempts += 1
     return Promise.resolve()
   }
 
-  markEventPublished(id: string, publishedAt: Date): Promise<void> {
+  markEventRelayed(id: string, relayedAt: Date): Promise<void> {
     const entry = this.outbox.get(id)
-    if (entry) entry.publishedAt = publishedAt.toISOString()
+    if (entry) entry.relayedAt = relayedAt.toISOString()
     return Promise.resolve()
   }
 

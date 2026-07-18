@@ -1,11 +1,20 @@
-import type { SandboxAuditEntry, SandboxContract, StoredAttachment } from '@flowform/api-contracts'
+import type {
+  PublishedFormVersion,
+  SandboxAuditEntry,
+  SandboxContract,
+  StoredAttachment,
+} from '@flowform/api-contracts'
 import type { SandboxChangedEvent } from '@flowform/realtime-contracts'
 
 export const SANDBOX_REPOSITORY = Symbol('SANDBOX_REPOSITORY')
 
-export interface StoredSandbox extends SandboxContract {
+export type StoredSandbox = Omit<
+  SandboxContract,
+  'publishedVersionCount' | 'publishedVersion' | 'submissionVersion'
+> & {
   tokenHash: string
   aggregateVersion: number
+  publishedVersions: PublishedFormVersion[]
 }
 
 export interface SandboxPersistenceChange {
@@ -14,6 +23,7 @@ export interface SandboxPersistenceChange {
   auditEntry: SandboxAuditEntry
   event: SandboxChangedEvent
   attachment?: StoredAttachment
+  publishedVersion?: PublishedFormVersion
 }
 
 export interface SandboxRepository {
@@ -22,10 +32,10 @@ export interface SandboxRepository {
   find(id: string): Promise<StoredSandbox | undefined>
   save(change: SandboxPersistenceChange): Promise<boolean>
   delete(id: string): Promise<void>
-  deleteExpired(now: Date): Promise<string[]>
+  listExpired(now: Date): Promise<string[]>
   listPendingEvents(limit: number): Promise<SandboxChangedEvent[]>
-  recordEventAttempt(id: string): Promise<void>
-  markEventPublished(id: string, publishedAt: Date): Promise<void>
+  recordRelayAttempt(id: string): Promise<void>
+  markEventRelayed(id: string, relayedAt: Date): Promise<void>
   health(): Promise<void>
   close(): Promise<void>
 }

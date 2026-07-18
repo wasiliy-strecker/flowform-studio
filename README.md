@@ -15,7 +15,7 @@ journey reviewable without creating several accounts.
 - NestJS with versioned REST endpoints, OpenAPI, Socket.IO, and structured errors
 - PostgreSQL persistence through Prisma with optimistic concurrency control
 - A transactional audit and outbox write for every aggregate mutation
-- Redis-backed event delivery with a direct development fallback
+- Redis-backed server relay with a direct development fallback and canonical reconnect refresh
 - Backpressure-aware uploads to private MinIO storage with signature and size checks
 - Runtime-validated contracts shared between browser and server
 - Unit, contract, HTTP integration, and Playwright browser tests
@@ -45,8 +45,8 @@ React PWA
              │
              ▼
 NestJS API ── optimistic revision and aggregate-version checks
-  ├─ PostgreSQL: sandbox aggregate, audit entries, attachments, outbox
-  ├─ Redis/BullMQ: retryable realtime delivery
+  ├─ PostgreSQL: sandbox aggregate, immutable versions, audit, attachments, outbox
+  ├─ Redis/BullMQ: retryable server-side realtime relay
   └─ MinIO: private streamed attachment objects
 ```
 
@@ -56,8 +56,9 @@ body is still rejected by the client.
 
 See [`docs/architecture.md`](docs/architecture.md) for state ownership, consistency
 boundaries, failure behavior, and module responsibilities. The main persistence
-decision is recorded in
-[`docs/adr/0001-sandbox-aggregate-and-outbox.md`](docs/adr/0001-sandbox-aggregate-and-outbox.md).
+decisions are recorded in
+[`ADR 0001`](docs/adr/0001-sandbox-aggregate-and-outbox.md) and
+[`ADR 0002`](docs/adr/0002-immutable-publication-and-browser-reconciliation.md).
 
 ## Consistency and security guarantees
 
@@ -65,10 +66,15 @@ decision is recorded in
   instead of silently overwriting another edit.
 - Aggregate state, its audit entry, attachment metadata, and its outbox event are
   written in one PostgreSQL transaction.
-- Realtime delivery is at least once. Event IDs allow clients to deduplicate, and
-  the UI always reloads canonical state after a durable event.
+- Every publication is a separate relational snapshot. Publishing the same draft
+  revision again is idempotent, while an active submission stays pinned to its
+  original form and workflow version.
+- Outbox records track server-side relay attempts, not browser delivery. Socket
+  notifications are best effort, so the UI refetches canonical state on reconnect,
+  after durable events, and on its periodic refresh interval.
 - Uploads are streamed with backpressure, capped at 5 MB, allowlisted by media type,
-  checked by file signature, hashed with SHA-256, and removed with their sandbox.
+  checked by file signature, and hashed with SHA-256. Expired cleanup removes the
+  object prefix before database metadata and retains failed rows for retry.
 - Access tokens are returned once and stored only as SHA-256 hashes by the API.
 - The project does not claim exactly-once execution. A client may retry after losing
   a response, while revision and aggregate checks prevent stale overwrites.
@@ -91,6 +97,10 @@ packages/
 docs/                      architecture notes and decisions
 deploy/                    Caddy edge configuration
 ```
+
+The protected version API exposes compact history at
+`GET /api/v1/sandboxes/{id}/versions` and a complete immutable snapshot at
+`GET /api/v1/sandboxes/{id}/versions/{version}`.
 
 ## Run the complete stack
 

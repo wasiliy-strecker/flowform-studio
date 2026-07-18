@@ -87,7 +87,7 @@ export function DashboardView(): React.JSX.Element {
         <Metric
           label={t('metrics.formVersion')}
           value={`r${sandbox.revision}`}
-          detail={publishedAt ? t('published') : t('status.draft')}
+          detail={t('metrics.publishedVersions', { count: sandbox.publishedVersionCount })}
         />
         <Metric
           label={t('metrics.fields')}

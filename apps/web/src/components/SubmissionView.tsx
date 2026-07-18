@@ -389,7 +389,7 @@ function SubmissionReview(): React.JSX.Element {
   const role = sandbox.activeRole
   const submission = sandbox.submission
   const answers = submission.answers
-  const workflow = sandbox.publishedVersion?.workflow ?? sandbox.workflow
+  const workflow = sandbox.submissionVersion?.workflow ?? sandbox.workflow
   const workflowState = submission.workflowState
   const comments = submission.comments
   const currentNode = workflow.nodes.find((node) => node.id === workflowState.currentNodeId)
@@ -422,7 +422,9 @@ function SubmissionReview(): React.JSX.Element {
           <section className="surface-card request-summary">
             <div className="card-heading-row">
               <div>
-                <span className="card-kicker">FORM VERSION {submission.formVersion}</span>
+                <span className="card-kicker">
+                  {t('pinnedFormVersion', { version: submission.formVersion })}
+                </span>
                 <h2>{t('requestDetails')}</h2>
               </div>
               <FileText size={22} />

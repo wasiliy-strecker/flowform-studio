@@ -1,6 +1,9 @@
 import {
+  SandboxContractSchema,
   type SandboxAuditEntry,
   type SandboxComment,
+  type PublishedFormVersion,
+  type PublishedFormVersionSummary,
   type StoredAttachment,
   type WorkflowActionInput,
 } from '@flowform/api-contracts'
@@ -53,6 +56,7 @@ interface MutationMetadata {
     | 'comment.created'
     | 'attachment.uploaded'
   attachment?: StoredAttachment
+  publishedVersion?: PublishedFormVersion
 }
 
 @Injectable()
@@ -78,6 +82,7 @@ export class SandboxService {
       aggregateVersion: 1,
       form: createExpenseRequestTemplate(),
       workflow: createExpenseApprovalWorkflow(),
+      publishedVersions: [],
       attachments: [],
       audit: [initialAudit],
     }
@@ -91,6 +96,34 @@ export class SandboxService {
 
   async assertAccess(id: string, token: string | undefined): Promise<void> {
     await this.authorize(id, token)
+  }
+
+  async listPublishedVersions(
+    id: string,
+    token: string | undefined,
+  ): Promise<PublishedFormVersionSummary[]> {
+    const sandbox = await this.authorize(id, token)
+    return sandbox.publishedVersions.map(({ version, draftRevision, publishedAt }) => ({
+      version,
+      draftRevision,
+      publishedAt,
+    }))
+  }
+
+  async getPublishedVersion(
+    id: string,
+    token: string | undefined,
+    version: number,
+  ): Promise<PublishedFormVersion> {
+    const sandbox = await this.authorize(id, token)
+    const published = sandbox.publishedVersions.find((candidate) => candidate.version === version)
+    if (!published) {
+      throw new NotFoundException({
+        code: 'published_version_not_found',
+        message: `Published version ${version} was not found.`,
+      })
+    }
+    return structuredClone(published)
   }
 
   async changeRole(
@@ -152,18 +185,23 @@ export class SandboxService {
       if (issues.length > 0) {
         throw new BadRequestException({ code: 'invalid_workflow', issues })
       }
-      sandbox.publishedVersion = {
-        version: (sandbox.publishedVersion?.version ?? 0) + 1,
+      const latest = sandbox.publishedVersions[0]
+      if (latest?.draftRevision === sandbox.revision) return undefined
+
+      const publishedVersion: PublishedFormVersion = {
+        version: (latest?.version ?? 0) + 1,
         draftRevision: sandbox.revision,
         form: structuredClone(sandbox.form),
         workflow: structuredClone(sandbox.workflow),
         publishedAt: new Date().toISOString(),
       }
+      sandbox.publishedVersions.unshift(publishedVersion)
       return {
         action: 'form.versionPublished',
         actorRole: sandbox.activeRole,
         targetId: sandbox.form.id,
         reason: 'form.versionPublished',
+        publishedVersion,
       }
     })
   }
@@ -173,7 +211,8 @@ export class SandboxService {
       if (sandbox.activeRole !== 'applicant') {
         throw new UnauthorizedException('Only the applicant role can submit a form.')
       }
-      if (!sandbox.publishedVersion) {
+      const published = sandbox.publishedVersions[0]
+      if (!published) {
         throw new BadRequestException('Publish the form before submitting it.')
       }
       if (sandbox.submission) {
@@ -182,7 +221,7 @@ export class SandboxService {
           message: 'This sandbox already contains a submission.',
         })
       }
-      const errors = validateAnswers(sandbox.publishedVersion.form, answers)
+      const errors = validateAnswers(published.form, answers)
       if (Object.keys(errors).length > 0) {
         throw new BadRequestException({ code: 'invalid_answers', errors })
       }
@@ -190,14 +229,9 @@ export class SandboxService {
       const createdAt = new Date().toISOString()
       sandbox.submission = {
         id: submissionId,
-        formVersion: sandbox.publishedVersion.version,
+        formVersion: published.version,
         answers: structuredClone(answers),
-        workflowState: startWorkflow(
-          sandbox.publishedVersion.workflow,
-          answers,
-          createdAt,
-          randomUUID(),
-        ),
+        workflowState: startWorkflow(published.workflow, answers, createdAt, randomUUID()),
         comments: [],
         createdAt,
       }
@@ -217,8 +251,16 @@ export class SandboxService {
   ): Promise<DemoSandbox> {
     return this.mutate(id, token, (sandbox) => {
       const submission = sandbox.submission
-      const published = sandbox.publishedVersion
-      if (!submission || !published) throw new NotFoundException('No submission is active.')
+      if (!submission) throw new NotFoundException('No submission is active.')
+      const published = sandbox.publishedVersions.find(
+        (candidate) => candidate.version === submission.formVersion,
+      )
+      if (!published) {
+        throw new ConflictException({
+          code: 'submission_version_missing',
+          message: 'The immutable version for this submission is missing.',
+        })
+      }
       const occurredAt = new Date().toISOString()
       const fullAction = toWorkflowAction(action, sandbox.activeRole, occurredAt)
       try {
@@ -306,12 +348,13 @@ export class SandboxService {
   private async mutate(
     id: string,
     token: string | undefined,
-    transform: (sandbox: StoredSandbox) => MutationMetadata,
+    transform: (sandbox: StoredSandbox) => MutationMetadata | undefined,
   ): Promise<DemoSandbox> {
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const current = await this.authorize(id, token)
       const next = structuredClone(current)
       const metadata = transform(next)
+      if (!metadata) return publicSandbox(current)
       const occurredAt = new Date()
       const auditEntry = this.audit(
         metadata.action,
@@ -328,6 +371,7 @@ export class SandboxService {
         auditEntry,
         event,
         ...(metadata.attachment ? { attachment: metadata.attachment } : {}),
+        ...(metadata.publishedVersion ? { publishedVersion: metadata.publishedVersion } : {}),
       })
       if (saved) return publicSandbox(next)
     }
@@ -452,8 +496,22 @@ function tokensMatch(token: string, storedHash: string): boolean {
 }
 
 function publicSandbox(stored: StoredSandbox): DemoSandbox {
-  const { tokenHash: _tokenHash, aggregateVersion: _aggregateVersion, ...sandbox } = stored
-  return structuredClone(sandbox)
+  const {
+    tokenHash: _tokenHash,
+    aggregateVersion: _aggregateVersion,
+    publishedVersions,
+    ...sandbox
+  } = stored
+  const publishedVersion = publishedVersions[0]
+  const submissionVersion = sandbox.submission
+    ? publishedVersions.find((candidate) => candidate.version === sandbox.submission?.formVersion)
+    : undefined
+  return SandboxContractSchema.parse({
+    ...structuredClone(sandbox),
+    publishedVersionCount: publishedVersions.length,
+    ...(publishedVersion ? { publishedVersion: structuredClone(publishedVersion) } : {}),
+    ...(submissionVersion ? { submissionVersion: structuredClone(submissionVersion) } : {}),
+  })
 }
 
 function positiveNumber(input: string | undefined, fallback: number): number {

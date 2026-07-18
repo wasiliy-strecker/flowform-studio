@@ -10,6 +10,7 @@ export function createSandboxFixture(overrides: Partial<SandboxContract> = {}): 
     revision: 1,
     form: createExpenseRequestTemplate(),
     workflow: createExpenseApprovalWorkflow(),
+    publishedVersionCount: 0,
     attachments: [],
     audit: [
       {

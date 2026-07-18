@@ -39,6 +39,7 @@ export const resources = {
       },
       metrics: {
         formVersion: 'Draft version',
+        publishedVersions: 'Published snapshots: {{count}}',
         fields: 'Typed fields',
         workflowNodes: 'Workflow nodes',
         status: 'Current status',
@@ -106,6 +107,7 @@ export const resources = {
       },
       reviewTitle: 'Review and collaboration',
       reviewBody: 'Switch roles in the top bar to move this request through the live workflow.',
+      pinnedFormVersion: 'Pinned form version {{version}}',
       requestDetails: 'Submitted values',
       conversation: 'Contextual conversation',
       noComments: 'No comments yet. Request clarification to start the conversation.',
@@ -202,6 +204,7 @@ export const resources = {
       },
       metrics: {
         formVersion: 'Entwurfsversion',
+        publishedVersions: 'Veröffentlichte Snapshots: {{count}}',
         fields: 'Typisierte Felder',
         workflowNodes: 'Workflow-Knoten',
         status: 'Aktueller Status',
@@ -271,6 +274,7 @@ export const resources = {
       },
       reviewTitle: 'Prüfung und Zusammenarbeit',
       reviewBody: 'Rolle oben wechseln, um den Antrag durch den Live-Workflow zu führen.',
+      pinnedFormVersion: 'Gebundene Formularversion {{version}}',
       requestDetails: 'Eingereichte Werte',
       conversation: 'Kontextbezogene Unterhaltung',
       noComments: 'Noch keine Kommentare. Eine Rückfrage startet die Unterhaltung.',

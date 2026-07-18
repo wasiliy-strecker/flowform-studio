@@ -9,33 +9,46 @@ datasource db {
 }
 
 model DemoSandbox {
-  id               String              @id @db.Uuid
-  tokenHash        String              @unique
-  expiresAt        DateTime
-  activeRole       String
-  revision         Int                 @default(1)
-  aggregateVersion Int                 @default(1)
-  form             Json
-  workflow         Json
-  publishedVersion Json?
-  submission       Json?
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
-  auditEvents      SandboxAuditEvent[]
-  attachments      Attachment[]
-  outboxEvents     OutboxEvent[]
+  id                String                 @id @db.Uuid
+  tokenHash         String                 @unique
+  expiresAt         DateTime
+  activeRole        String
+  revision          Int                    @default(1)
+  aggregateVersion  Int                    @default(1)
+  form              Json
+  workflow          Json
+  submission        Json?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  publishedVersions PublishedFormVersion[]
+  auditEvents       SandboxAuditEvent[]
+  attachments       Attachment[]
+  outboxEvents      OutboxEvent[]
 
   @@index([expiresAt])
 }
 
+model PublishedFormVersion {
+  sandboxId     String      @db.Uuid
+  version       Int
+  draftRevision Int
+  form          Json
+  workflow      Json
+  publishedAt   DateTime
+  sandbox       DemoSandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+
+  @@id([sandboxId, version])
+  @@index([sandboxId, publishedAt])
+}
+
 model SandboxAuditEvent {
-  id           String      @id @db.Uuid
-  sandboxId    String      @db.Uuid
-  actorRole    String
-  action       String
-  targetId     String
-  occurredAt   DateTime    @default(now())
-  sandbox      DemoSandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  id         String      @id @db.Uuid
+  sandboxId  String      @db.Uuid
+  actorRole  String
+  action     String
+  targetId   String
+  occurredAt DateTime    @default(now())
+  sandbox    DemoSandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
 
   @@index([sandboxId, occurredAt])
 }
@@ -56,15 +69,15 @@ model Attachment {
 }
 
 model OutboxEvent {
-  id          String      @id @db.Uuid
-  sandboxId   String      @db.Uuid
-  eventType   String
-  payload     Json
-  createdAt   DateTime    @default(now())
-  publishedAt DateTime?
-  attempts    Int         @default(0)
-  sandbox     DemoSandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
+  id            String      @id @db.Uuid
+  sandboxId     String      @db.Uuid
+  eventType     String
+  payload       Json
+  createdAt     DateTime    @default(now())
+  relayedAt     DateTime?
+  relayAttempts Int         @default(0)
+  sandbox       DemoSandbox @relation(fields: [sandboxId], references: [id], onDelete: Cascade)
 
-  @@index([publishedAt, createdAt])
+  @@index([relayedAt, createdAt])
   @@index([sandboxId, createdAt])
 }

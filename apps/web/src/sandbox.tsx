@@ -327,6 +327,7 @@ export function SandboxProvider({
       const ready = RealtimeReadySchema.safeParse(input)
       if (ready.success && ready.data.sandboxId === sessionQuery.data?.sandbox.id) {
         setRealtimeStatus('online')
+        void queryClient.refetchQueries({ queryKey: sessionQueryKey, exact: true })
       }
     })
     socket.on('disconnect', () => setRealtimeStatus('offline'))

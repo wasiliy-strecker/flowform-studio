@@ -1,4 +1,8 @@
-import { WorkflowActionInputSchema } from '@flowform/api-contracts'
+import {
+  WorkflowActionInputSchema,
+  type PublishedFormVersion,
+  type PublishedFormVersionSummary,
+} from '@flowform/api-contracts'
 import { ActorRoleSchema, FormDefinitionSchema } from '@flowform/form-schema'
 import { WorkflowDefinitionSchema } from '@flowform/workflow-schema'
 import {
@@ -51,6 +55,28 @@ export class SandboxController {
     @Headers('x-sandbox-token') token?: string,
   ): Promise<DemoSandbox> {
     return this.sandboxes.get(sandboxId, token)
+  }
+
+  @Get(':sandboxId/versions')
+  @ApiSecurity('sandbox')
+  @ApiOperation({ summary: 'List immutable published version metadata' })
+  listVersions(
+    @Param('sandboxId') sandboxId: string,
+    @Headers('x-sandbox-token') token?: string,
+  ): Promise<PublishedFormVersionSummary[]> {
+    return this.sandboxes.listPublishedVersions(sandboxId, token)
+  }
+
+  @Get(':sandboxId/versions/:version')
+  @ApiSecurity('sandbox')
+  @ApiOperation({ summary: 'Read one immutable published version' })
+  getVersion(
+    @Param('sandboxId') sandboxId: string,
+    @Param('version') versionInput: string,
+    @Headers('x-sandbox-token') token?: string,
+  ): Promise<PublishedFormVersion> {
+    const version = parse(z.coerce.number().int().positive(), versionInput)
+    return this.sandboxes.getPublishedVersion(sandboxId, token, version)
   }
 
   @Patch(':sandboxId/role')

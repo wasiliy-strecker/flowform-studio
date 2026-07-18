@@ -1,6 +1,6 @@
 # ADR 0001: Persist the demo sandbox as an aggregate with an outbox
 
-- Status: Accepted
+- Status: Accepted, publication storage and relay terminology refined by ADR 0002
 - Date: 2026-07-17
 
 ## Context
@@ -16,8 +16,8 @@ behavior.
 ## Decision
 
 Use the sandbox as the application aggregate. Store its current form, workflow,
-published version, and submission as validated JSON documents in PostgreSQL. Store
-audit entries, attachment metadata, and outbox events in related tables.
+publication state, and submission as validated data in PostgreSQL. Store audit
+entries, attachment metadata, and outbox events in related tables.
 
 Every mutation uses an aggregate-version compare-and-swap and writes the aggregate,
 audit row, optional attachment row, and outbox row in one Prisma transaction. Draft
@@ -32,12 +32,12 @@ implementations. The memory adapter is not a production persistence mode.
 - Restart-safe sandboxes and atomic audit records become the default with a database.
 - Concurrent changes fail safely instead of using last-write-wins behavior.
 - Socket delivery can retry independently after the database commit.
-- Event delivery remains at least once, so consumers must deduplicate event IDs and
-  reload canonical state.
+- Relay work may repeat, so consumers deduplicate event IDs and reload canonical
+  state. ADR 0002 distinguishes server relay from best-effort browser delivery.
 - JSON document fields require runtime parsing on read and explicit schema migration
   when a future schema version changes shape.
-- Cleanup can cascade relational data and then remove the matching object-storage
-  prefix.
+- Cleanup owns both relational data and the matching object-storage prefix. ADR 0002
+  defines the failure-safe deletion order.
 
 ## Rejected alternatives
 

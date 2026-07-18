@@ -45,7 +45,7 @@ function response(status: 'ok' | 'degraded', checks?: HealthResponse['checks']):
   return {
     status,
     service: 'flowform-studio-api',
-    version: '0.2.0',
+    version: '0.2.1',
     now: new Date().toISOString(),
     ...(checks ? { checks } : {}),
   }

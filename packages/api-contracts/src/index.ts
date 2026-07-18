@@ -67,18 +67,71 @@ export const PublishedFormVersionSchema = z.object({
 })
 export type PublishedFormVersion = z.infer<typeof PublishedFormVersionSchema>
 
-export const SandboxContractSchema = z.object({
-  id: z.string().min(1),
-  expiresAt: z.iso.datetime(),
-  activeRole: ActorRoleSchema,
-  revision: z.number().int().positive(),
-  form: FormDefinitionSchema,
-  workflow: WorkflowDefinitionSchema,
-  publishedVersion: PublishedFormVersionSchema.optional(),
-  submission: SandboxSubmissionSchema.optional(),
-  attachments: z.array(StoredAttachmentSchema),
-  audit: z.array(SandboxAuditEntrySchema),
+export const PublishedFormVersionSummarySchema = PublishedFormVersionSchema.pick({
+  version: true,
+  draftRevision: true,
+  publishedAt: true,
 })
+export type PublishedFormVersionSummary = z.infer<typeof PublishedFormVersionSummarySchema>
+
+export const PublishedFormVersionListSchema = z.array(PublishedFormVersionSummarySchema)
+
+export const SandboxContractSchema = z
+  .object({
+    id: z.string().min(1),
+    expiresAt: z.iso.datetime(),
+    activeRole: ActorRoleSchema,
+    revision: z.number().int().positive(),
+    form: FormDefinitionSchema,
+    workflow: WorkflowDefinitionSchema,
+    publishedVersionCount: z.number().int().nonnegative(),
+    publishedVersion: PublishedFormVersionSchema.optional(),
+    submissionVersion: PublishedFormVersionSchema.optional(),
+    submission: SandboxSubmissionSchema.optional(),
+    attachments: z.array(StoredAttachmentSchema),
+    audit: z.array(SandboxAuditEntrySchema),
+  })
+  .superRefine((sandbox, context) => {
+    if (sandbox.publishedVersionCount === 0 && sandbox.publishedVersion) {
+      context.addIssue({
+        code: 'custom',
+        path: ['publishedVersionCount'],
+        message: 'A latest version requires at least one published version.',
+      })
+    }
+    if (sandbox.publishedVersionCount > 0 && !sandbox.publishedVersion) {
+      context.addIssue({
+        code: 'custom',
+        path: ['publishedVersion'],
+        message: 'The latest published version is missing.',
+      })
+    }
+    if (sandbox.submission && !sandbox.submissionVersion) {
+      context.addIssue({
+        code: 'custom',
+        path: ['submissionVersion'],
+        message: 'A submission requires its immutable published version.',
+      })
+    }
+    if (!sandbox.submission && sandbox.submissionVersion) {
+      context.addIssue({
+        code: 'custom',
+        path: ['submissionVersion'],
+        message: 'A submission version requires an active submission.',
+      })
+    }
+    if (
+      sandbox.submission &&
+      sandbox.submissionVersion &&
+      sandbox.submission.formVersion !== sandbox.submissionVersion.version
+    ) {
+      context.addIssue({
+        code: 'custom',
+        path: ['submissionVersion', 'version'],
+        message: 'The submission version does not match the pinned form version.',
+      })
+    }
+  })
 export type SandboxContract = z.infer<typeof SandboxContractSchema>
 
 export const SandboxSessionSchema = z.object({

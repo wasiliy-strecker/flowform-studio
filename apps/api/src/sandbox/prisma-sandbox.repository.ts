@@ -1,4 +1,5 @@
 import {
+  PublishedFormVersionSchema,
   SandboxContractSchema,
   type SandboxAuditEntry,
   type StoredAttachment,
@@ -14,7 +15,7 @@ import type {
 } from './sandbox.repository'
 
 type SandboxRow = Prisma.DemoSandboxGetPayload<{
-  include: { auditEvents: true; attachments: true }
+  include: { auditEvents: true; attachments: true; publishedVersions: true }
 }>
 
 export class PrismaSandboxRepository implements SandboxRepository {
@@ -37,9 +38,6 @@ export class PrismaSandboxRepository implements SandboxRepository {
           aggregateVersion: sandbox.aggregateVersion,
           form: json(sandbox.form),
           workflow: json(sandbox.workflow),
-          publishedVersion: sandbox.publishedVersion
-            ? json(sandbox.publishedVersion)
-            : Prisma.DbNull,
           submission: sandbox.submission ? json(sandbox.submission) : Prisma.DbNull,
           auditEvents: {
             create: sandbox.audit.map(auditData),
@@ -58,6 +56,7 @@ export class PrismaSandboxRepository implements SandboxRepository {
       include: {
         auditEvents: { orderBy: { occurredAt: 'desc' } },
         attachments: { orderBy: { createdAt: 'asc' } },
+        publishedVersions: { orderBy: { version: 'desc' } },
       },
     })
     return row ? fromRow(row) : undefined
@@ -77,9 +76,6 @@ export class PrismaSandboxRepository implements SandboxRepository {
           aggregateVersion: change.sandbox.aggregateVersion,
           form: json(change.sandbox.form),
           workflow: json(change.sandbox.workflow),
-          publishedVersion: change.sandbox.publishedVersion
-            ? json(change.sandbox.publishedVersion)
-            : Prisma.DbNull,
           submission: change.sandbox.submission ? json(change.sandbox.submission) : Prisma.DbNull,
         },
       })
@@ -96,6 +92,18 @@ export class PrismaSandboxRepository implements SandboxRepository {
           },
         })
       }
+      if (change.publishedVersion) {
+        await transaction.publishedFormVersion.create({
+          data: {
+            sandboxId: change.sandbox.id,
+            version: change.publishedVersion.version,
+            draftRevision: change.publishedVersion.draftRevision,
+            form: json(change.publishedVersion.form),
+            workflow: json(change.publishedVersion.workflow),
+            publishedAt: new Date(change.publishedVersion.publishedAt),
+          },
+        })
+      }
       await transaction.outboxEvent.create({
         data: { sandboxId: change.sandbox.id, ...outboxData(change.event) },
       })
@@ -107,20 +115,17 @@ export class PrismaSandboxRepository implements SandboxRepository {
     await this.prisma.demoSandbox.deleteMany({ where: { id } })
   }
 
-  async deleteExpired(now: Date): Promise<string[]> {
+  async listExpired(now: Date): Promise<string[]> {
     const expired = await this.prisma.demoSandbox.findMany({
       where: { expiresAt: { lte: now } },
       select: { id: true },
     })
-    if (expired.length === 0) return []
-    const ids = expired.map((sandbox) => sandbox.id)
-    await this.prisma.demoSandbox.deleteMany({ where: { id: { in: ids } } })
-    return ids
+    return expired.map((sandbox) => sandbox.id)
   }
 
   async listPendingEvents(limit: number): Promise<SandboxChangedEvent[]> {
     const rows = await this.prisma.outboxEvent.findMany({
-      where: { publishedAt: null },
+      where: { relayedAt: null },
       orderBy: { createdAt: 'asc' },
       take: limit,
     })
@@ -133,17 +138,17 @@ export class PrismaSandboxRepository implements SandboxRepository {
     })
   }
 
-  async recordEventAttempt(id: string): Promise<void> {
+  async recordRelayAttempt(id: string): Promise<void> {
     await this.prisma.outboxEvent.updateMany({
-      where: { id, publishedAt: null },
-      data: { attempts: { increment: 1 } },
+      where: { id, relayedAt: null },
+      data: { relayAttempts: { increment: 1 } },
     })
   }
 
-  async markEventPublished(id: string, publishedAt: Date): Promise<void> {
+  async markEventRelayed(id: string, relayedAt: Date): Promise<void> {
     await this.prisma.outboxEvent.updateMany({
-      where: { id, publishedAt: null },
-      data: { publishedAt },
+      where: { id, relayedAt: null },
+      data: { relayedAt },
     })
   }
 
@@ -157,6 +162,22 @@ export class PrismaSandboxRepository implements SandboxRepository {
 }
 
 function fromRow(row: SandboxRow): StoredSandbox {
+  const publishedVersions = row.publishedVersions.map((version) =>
+    PublishedFormVersionSchema.parse({
+      version: version.version,
+      draftRevision: version.draftRevision,
+      form: version.form,
+      workflow: version.workflow,
+      publishedAt: version.publishedAt.toISOString(),
+    }),
+  )
+  const latest = publishedVersions[0]
+  const submission = row.submission
+  const submissionVersion = submission
+    ? publishedVersions.find(
+        (candidate) => candidate.version === (submission as { formVersion?: unknown }).formVersion,
+      )
+    : undefined
   const contract = SandboxContractSchema.parse({
     id: row.id,
     expiresAt: row.expiresAt.toISOString(),
@@ -164,8 +185,10 @@ function fromRow(row: SandboxRow): StoredSandbox {
     revision: row.revision,
     form: row.form,
     workflow: row.workflow,
-    ...(row.publishedVersion ? { publishedVersion: row.publishedVersion } : {}),
-    ...(row.submission ? { submission: row.submission } : {}),
+    publishedVersionCount: publishedVersions.length,
+    ...(latest ? { publishedVersion: latest } : {}),
+    ...(submissionVersion ? { submissionVersion } : {}),
+    ...(submission ? { submission } : {}),
     attachments: row.attachments.map((attachment) => ({
       id: attachment.id,
       objectKey: attachment.objectKey,
@@ -184,10 +207,17 @@ function fromRow(row: SandboxRow): StoredSandbox {
       occurredAt: entry.occurredAt.toISOString(),
     })),
   })
+  const {
+    publishedVersionCount: _publishedVersionCount,
+    publishedVersion: _publishedVersion,
+    submissionVersion: _submissionVersion,
+    ...storedContract
+  } = contract
   return {
-    ...contract,
+    ...storedContract,
     tokenHash: row.tokenHash,
     aggregateVersion: row.aggregateVersion,
+    publishedVersions,
   }
 }
 

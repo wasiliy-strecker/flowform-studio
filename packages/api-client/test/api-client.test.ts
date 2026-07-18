@@ -33,6 +33,7 @@ describe('FlowFormApiClient', () => {
             ],
             edges: [{ id: 'edge', source: 'start', target: 'end' }],
           },
+          publishedVersionCount: 0,
           attachments: [],
           audit: [],
         }),

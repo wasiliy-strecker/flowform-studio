@@ -31,7 +31,7 @@ export class OutboxRelayService implements OnModuleInit, OnModuleDestroy {
         queueName,
         async (job) => {
           this.realtime.emitEvent(job.data)
-          await this.repository.markEventPublished(job.data.id, new Date())
+          await this.repository.markEventRelayed(job.data.id, new Date())
         },
         { connection },
       )
@@ -59,7 +59,7 @@ export class OutboxRelayService implements OnModuleInit, OnModuleDestroy {
     try {
       const events = await this.repository.listPendingEvents(100)
       for (const event of events) {
-        await this.repository.recordEventAttempt(event.id)
+        await this.repository.recordRelayAttempt(event.id)
         if (this.queue) {
           await this.queue.add('deliver', event, {
             jobId: event.id,
@@ -70,7 +70,7 @@ export class OutboxRelayService implements OnModuleInit, OnModuleDestroy {
           })
         } else {
           this.realtime.emitEvent(event)
-          await this.repository.markEventPublished(event.id, new Date())
+          await this.repository.markEventRelayed(event.id, new Date())
         }
       }
       return events.length

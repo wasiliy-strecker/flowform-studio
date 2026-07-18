@@ -53,6 +53,79 @@ describe('SandboxService', () => {
     expect(rejected.reason).toBeInstanceOf(ConflictException)
   })
 
+  it('coalesces concurrent publication of the same draft revision', async () => {
+    const created = await service.create()
+    const published = await Promise.all([
+      service.publish(created.sandbox.id, created.accessToken, created.sandbox.revision),
+      service.publish(created.sandbox.id, created.accessToken, created.sandbox.revision),
+    ])
+
+    expect(published.map((sandbox) => sandbox.publishedVersionCount)).toEqual([1, 1])
+    const reloaded = await service.get(created.sandbox.id, created.accessToken)
+    expect(reloaded.publishedVersion?.version).toBe(1)
+    expect(reloaded.audit.filter((entry) => entry.action === 'form.versionPublished')).toHaveLength(
+      1,
+    )
+    const events = await repository.listPendingEvents(20)
+    expect(
+      events.filter(
+        (event) =>
+          event.type === 'sandbox.changed' && event.payload.reason === 'form.versionPublished',
+      ),
+    ).toHaveLength(1)
+  })
+
+  it('keeps an active submission pinned while newer versions are published', async () => {
+    const { sandbox, accessToken } = await service.create()
+    const versionOne = await service.publish(sandbox.id, accessToken, sandbox.revision)
+    await service.changeRole(sandbox.id, accessToken, 'applicant')
+    await service.submit(sandbox.id, accessToken, {
+      applicantName: 'Alex Morgan',
+      applicantEmail: 'alex@example.com',
+      amount: 6_500,
+      category: 'equipment',
+      justification: 'Replace outdated workstations.',
+      confirmation: true,
+      signature: 'drawn-confirmation',
+    })
+
+    await service.changeRole(sandbox.id, accessToken, 'designer')
+    const nextWorkflow = structuredClone(versionOne.workflow)
+    const managementEdge = nextWorkflow.edges.find((edge) => edge.id === 'decision-management')
+    const managementRule = managementEdge?.condition?.rules[0]
+    if (!managementRule || !('value' in managementRule)) {
+      throw new Error('Expected management condition.')
+    }
+    managementRule.value = 100_000
+    const updated = await service.updateDraft(
+      sandbox.id,
+      accessToken,
+      versionOne.revision,
+      { ...versionOne.form, description: 'Version two description.' },
+      nextWorkflow,
+    )
+    const versionTwo = await service.publish(sandbox.id, accessToken, updated.revision)
+
+    expect(versionTwo).toMatchObject({
+      publishedVersionCount: 2,
+      publishedVersion: { version: 2, draftRevision: updated.revision },
+      submission: { formVersion: 1 },
+      submissionVersion: { version: 1 },
+    })
+    await expect(service.listPublishedVersions(sandbox.id, accessToken)).resolves.toEqual([
+      expect.objectContaining({ version: 2 }),
+      expect.objectContaining({ version: 1 }),
+    ])
+    const historicalVersion = await service.getPublishedVersion(sandbox.id, accessToken, 1)
+    expect(historicalVersion.version).toBe(1)
+    expect(historicalVersion.form.description).not.toBe('Version two description.')
+
+    await service.changeRole(sandbox.id, accessToken, 'reviewer')
+    const reviewed = await service.performAction(sandbox.id, accessToken, { type: 'approve' })
+    expect(reviewed.submission?.workflowState.currentNodeId).toBe('management')
+    expect(reviewed.submissionVersion?.version).toBe(1)
+  })
+
   it('persists the clarification and two-stage approval journey in the aggregate', async () => {
     const { sandbox, accessToken } = await service.create()
     await service.publish(sandbox.id, accessToken, sandbox.revision)

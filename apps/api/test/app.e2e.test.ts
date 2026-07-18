@@ -1,5 +1,7 @@
 import {
   ApiProblemSchema,
+  PublishedFormVersionListSchema,
+  PublishedFormVersionSchema,
   SandboxContractSchema,
   SandboxSessionSchema,
   type SandboxContract,
@@ -82,6 +84,35 @@ describe('FlowForm API vertical slice', () => {
       expectedRevision: sandbox.revision,
     })
     expect(sandbox.publishedVersion?.draftRevision).toBe(2)
+    expect(sandbox.publishedVersionCount).toBe(1)
+
+    const publishAuditCount = sandbox.audit.filter(
+      (entry) => entry.action === 'form.versionPublished',
+    ).length
+    sandbox = await mutate(sandbox, accessToken, 'POST', 'publish', {
+      expectedRevision: sandbox.revision,
+    })
+    expect(sandbox.publishedVersionCount).toBe(1)
+    expect(sandbox.audit.filter((entry) => entry.action === 'form.versionPublished')).toHaveLength(
+      publishAuditCount,
+    )
+
+    const versionsResponse = await fetch(`${apiUrl}/sandboxes/${sandbox.id}/versions`, {
+      headers: { 'x-sandbox-token': accessToken },
+    })
+    expect(versionsResponse.status).toBe(200)
+    expect(PublishedFormVersionListSchema.parse(await versionsResponse.json())).toEqual([
+      expect.objectContaining({ version: 1, draftRevision: 2 }),
+    ])
+
+    const versionResponse = await fetch(`${apiUrl}/sandboxes/${sandbox.id}/versions/1`, {
+      headers: { 'x-sandbox-token': accessToken },
+    })
+    expect(versionResponse.status).toBe(200)
+    expect(PublishedFormVersionSchema.parse(await versionResponse.json())).toMatchObject({
+      version: 1,
+      draftRevision: 2,
+    })
 
     const socket = io(`${apiOrigin}/realtime`, {
       auth: { sandboxId: sandbox.id, accessToken },
